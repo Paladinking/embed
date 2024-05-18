@@ -46,6 +46,9 @@ typedef char* Filename_t;
 #define F_FORMAT "%s"
 #endif
 
+enum Format {
+    COFF64, COFF32, ELF64, ELF32, ELF32_ARM, NONE
+};
 
 #define WRITE_U32(ptr, val) do { \
     (ptr)[0] = (val) & 0xff; \
@@ -352,13 +355,14 @@ void write_elf64_header(uint64_t data_size, uint32_t no_symbols, uint64_t strtab
     WRITE_U64(out + 40, data_size);
 }
 
-void write_elf32_header(uint32_t data_size, uint32_t no_symbols, uint32_t strtab_size, uint8_t* out) {
+void write_elf32_header(uint32_t data_size, uint32_t no_symbols, uint32_t strtab_size, uint8_t machine, uint8_t* out) {
     memcpy(out, ELF32_HEADER, sizeof(ELF32_HEADER));
     data_size += 8 * no_symbols + sizeof(ELF32_HEADER);
     data_size = ALIGN_TO(data_size, 4);
     data_size += 16 + no_symbols * sizeof(ELF32_SYMTAB) + sizeof(ELF_SHSTRTAB) + strtab_size;
     data_size = ALIGN_TO(data_size, 4);
     WRITE_U32(out + 32, data_size);
+    out[18] = machine;
 }
 
 uint8_t* write_elf64_symtab(const char** names, const uint64_t *size, uint32_t no_symbols, uint64_t *data_size) {
@@ -455,8 +459,9 @@ void write_elf32_section_headers(uint32_t data_size, uint32_t no_symbols, uint32
 
 
 bool write_elf(const char** names, const Filename_t* files, const uint64_t* size,
-        const uint32_t no_symbols, const Filename_t outname, bool readonly, bool elf32) {
+        const uint32_t no_symbols, const Filename_t outname, bool readonly, enum Format format) {
     FILE *out = OPEN(outname, "wb");
+    bool elf32 = format == ELF32 || format == ELF32_ARM;
     if (out == NULL) {
         PERROR("Could not create file " F_FORMAT LTR("\n"), outname);
         return false;
@@ -481,7 +486,8 @@ bool write_elf(const char** names, const Filename_t* files, const uint64_t* size
     uint32_t hsize;
     if (elf32) {
         hsize = sizeof(ELF32_HEADER);
-        write_elf32_header(data_size, no_symbols, strtab_size, header);
+        uint8_t machine = format == ELF32 ? 3 : 40;
+        write_elf32_header(data_size, no_symbols, strtab_size, machine, header);
     } else {
         hsize = sizeof(ELF64_HEADER);
         write_elf64_header(data_size, no_symbols, strtab_size, header);
@@ -719,6 +725,20 @@ error:
     return false;
 }
 
+char* to_ascii(const CHAR* ptr) {
+    size_t len = STRLEN(ptr);
+    char* res = malloc(len + 1);
+    for (size_t i = 0; i < len; ++i) {
+        if (ptr[i] > 127) {
+            free(res);
+            return NULL;
+        }
+        res[i] = ptr[i];
+    }
+    res[len] = '\0';
+    return res;
+}
+
 char* to_symbol(const CHAR* ptr, bool replace_dot, bool format) {
     size_t len = STRLEN(ptr);
     char* res = malloc(len + 1);
@@ -874,10 +894,6 @@ cleanup:
     return res;
 }
 
-enum Format {
-    COFF64, COFF32, ELF64, ELF32, NONE
-};
-
 
 int ENTRY(int argc, CHAR** argv) {
 #ifdef _WIN32
@@ -959,7 +975,7 @@ int ENTRY(int argc, CHAR** argv) {
                     PERROR("" STR_FORMAT, "Multiple object formats specified\n");
                     goto cleanup;
                 }
-                char* format = to_symbol(argv[i] + ix, false, false);
+                char* format = to_ascii(argv[i] + ix);
                 if (format != NULL) {
                     if (strcmp(format, "coff64") == 0) {
                         out_format = COFF64;
@@ -969,6 +985,8 @@ int ENTRY(int argc, CHAR** argv) {
                         out_format = COFF32;
                     } else if (strcmp(format, "elf32") == 0) {
                         out_format = ELF32;
+                    } else if (strcmp(format, "elf32-arm") == 0) {
+                        out_format = ELF32_ARM;
                     }
                     free(format);
                 }
@@ -1091,7 +1109,7 @@ int ENTRY(int argc, CHAR** argv) {
     if (out_format == COFF64 || out_format  == COFF32) {
         write_coff((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly, out_format == COFF32);
     } else {
-        write_elf((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly, out_format == ELF32);
+        write_elf((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly, out_format);
     }
     if (header != NULL) {
         write_c_header((const char**)symbol_names, input_sizes, input_count, header, readonly);
