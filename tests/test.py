@@ -18,72 +18,84 @@ void write_file(char* name, const uint8_t *data, uint64_t size) {
     fclose(out);
 }
 """
+ALL_TARGETS = ['VC64', 'VC86', 'MINGW', 'GCC64', 'GCC32']
 
 TARGETS = {
-    'Coff64' : ['VC64', 'MINGW'],
-    'Coff32' : ['VC86'],
-    'Elf64' : ['GCC64'],
-    'Elf32' : ['GCC32']
+    'coff64' : ['VC64', 'MINGW'],
+    'coff32' : ['VC86'],
+    'elf64' : ['GCC64'],
+    'elf32' : ['GCC32']
 }
 
 MAKE_CC = {
     'VC64': lambda src, obj, out: (['cl', src] + ([obj] if obj else []) + ['/nologo', f'/Fe:{out}.exe'], [f'{out}.exe']),
     'VC86': lambda src, obj, out: (['cl', src] + ([obj] if obj else []) + ['/nologo', f'/Fe:{out}.exe'], [f'{out}.exe']),
-    'MINGW': lambda src, obj, out: (['gcc', src] + ([obj] if obj else []) + ['-municode', '-o', f'{out}.exe'], [f'{out}.exe']),
+    'MINGW': lambda src, obj, out: (['gcc', src] + ([obj] if obj else ['-municode']) + ['-o', f'{out}.exe'], [f'{out}.exe']),
     'GCC64': lambda src, obj, out:  (['wsl', 'gcc', src] + ([obj] if obj else []) + ['-o', f'{out}'], ['wsl', f'./{out}']),
     'GCC32': lambda src, obj, out:  (['wsl', 'gcc', '-m32', src] + ([obj] if obj else []) + ['-o', f'{out}'], ['wsl', f'./{out}'])
 }
 
 COFF64_TARGETS = ['MSVC', 'MINGW']
 
-def create_test(obj_name, cmp_name, fmt, files, executable):
+def create_test(obj_name, cmp_name, files, executable):
     for target in TARGETS[obj_name]:
-        if os.path.exists(f"out{obj_name}-{cmp_name}-{target}"):
-            shutil.rmtree(f"out{obj_name}-{cmp_name}-{target}")
-        os.mkdir(f"out{obj_name}-{cmp_name}-{target}")
         with open(f"test_{obj_name}-{cmp_name}-{target}.c", 'w') as file:
-            file.write(f'#include "assets{obj_name}-{cmp_name}-{target}.h"\n#include <stdio.h>\n\n')
+            file.write(f'#include "assets-{obj_name}-{cmp_name}-{target}.h"\n#include <stdio.h>\n\n')
             file.write(WRITE_FILE)
             file.write('int main() {\n')
             for f in files:
                 nam = os.path.split(f)[1]
                 symbol = nam.replace('.', '_')
-                file.write(f'    write_file("out{obj_name}-{cmp_name}-{target}/{nam}", {symbol}, {symbol}_size);\n')
+                file.write(f'    write_file("out-{obj_name}-{cmp_name}-{target}/{nam}", {symbol}, {symbol}_size);\n')
             file.write('return 0;\n}\n')
 
-        cmd = executable + [f"-oassets{obj_name}-{cmp_name}-{target}.obj", f"-hassets{obj_name}-{cmp_name}-{target}.h", f"-f{fmt}"] + files
+        cmd = executable + [f"-oassets-{obj_name}-{cmp_name}-{target}.obj", f"-hassets-{obj_name}-{cmp_name}-{target}.h", f"-f{obj_name}"] + files
         subprocess.run(cmd)
-
 
 def main():
     files = glob.glob("assets/**/*")
-    if len(sys.argv) > 2 and sys.argv[1] == '--create':
-        cmd, exe = MAKE_CC[sys.argv[2]]('../embed.c', '', f'embed-{sys.argv[2]}')
-        print(cmd, exe)
-        subprocess.run(cmd)
-        create_test("Coff64", sys.argv[2], "coff64", files, exe)
-        create_test("Coff32", sys.argv[2], "coff32", files, exe)
-        create_test("Elf64", sys.argv[2], "elf64", files, exe)
-        create_test("Elf32", sys.argv[2], "elf32", files, exe)
-        return
-
-    if len(sys.argv) > 2 and sys.argv[1] == '--run':
-
-        target = sys.argv[1]
-        cmp = sys.argv[2]
+    if len(sys.argv) > 2:
+        target = sys.argv[2]
     else:
         return
-    res = glob.glob(f"out{target}-{cmp}/*")
 
-    for file in files:
-        name = os.path.split(file)[1]
-        assert os.path.join(f"out{target}-{cmp}", name) in res, f"{file} does not exist in output"
-        with open(file, 'rb') as f1:
-            d1 = f1.read()
-        with open(os.path.join(f"out{target}-{cmp}", name), 'rb') as f2:
-            d2 = f2.read()
-        assert d1 == d2, f"Data in {file} differs"
-    print("Passed all tests")
+    if sys.argv[1] == '--create':
+        cmd, exe = MAKE_CC[target]('../embed.c', '', f'embed-{target}')
+        print(cmd, exe)
+        subprocess.run(cmd)
+        files = [file.replace('\\', '/') for file in files]
+        for source in TARGETS:
+            create_test(source, target, files, exe)
+        return
+
+    if sys.argv[1] == '--run':
+        for source in TARGETS:
+            if target in TARGETS[source]:
+                for comp in ALL_TARGETS:
+                    if os.path.exists(f"out-{source}-{comp}-{target}"):
+                        shutil.rmtree(f"out-{source}-{comp}-{target}")
+                    os.mkdir(f"out-{source}-{comp}-{target}")
+                    cmd, exe = MAKE_CC[target](f'test_{source}-{comp}-{target}.c',
+                                               f'assets-{source}-{comp}-{target}.obj',
+                                               f'test_{source}-{comp}-{target}')
+                    print(cmd)
+                    subprocess.run(cmd)
+                    subprocess.run(exe)
+                    res = glob.glob(f"out-{source}-{comp}-{target}/*")
+                    for file in files:
+                        name = os.path.split(file)[1]
+                        assert os.path.join(f"out-{source}-{comp}-{target}", name) in res, f"{file} does not exist in output"
+                        with open(file, 'rb') as f1:
+                            d1 = f1.read()
+                        with open(os.path.join(f"out-{source}-{comp}-{target}", name), 'rb') as f2:
+                            d2 = f2.read()
+                        assert d1 == d2, f"Data in {file} differs"
+
+        print("Passed all tests")
+        return
+    else:
+        return
+
 
 if __name__ == "__main__":
     main()
