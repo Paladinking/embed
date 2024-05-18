@@ -125,6 +125,35 @@ bool write_all_files(FILE* out, const Filename_t* names, const uint64_t* sizes, 
     return true;
 }
 
+void write_c_header(const char** symbol_names, uint64_t *input_sizes, uint32_t input_count, Filename_t header, bool readonly) {
+    FILE* out = OPEN(header, "w");
+    if (out == NULL) {
+        PERROR("Could not open " F_FORMAT LTR("\n"), header);
+        return;
+    }
+
+    if (fwrite("#pragma once\n#include <stdint.h>\n\n", 1, 34, out) != 34) {
+        PERROR("Writing to " F_FORMAT LTR(" failed\n"), header);
+        goto error;
+    }
+    for (uint32_t i = 0; i < input_count; ++i) {
+        const char* format = "extern uint64_t %s_size;\nextern uint8_t %s[%llu];\n\n";
+        if (readonly) {
+            format = "extern const uint64_t %s_size;\nextern const uint8_t %s[%llu];\n\n";
+        }
+        if (fprintf(out, format, symbol_names[i], symbol_names[i], (unsigned long long)input_sizes[i]) < 0) {
+            PERROR("Writing to " F_FORMAT LTR(" failed\n"), header);
+            goto error;
+        }
+    }
+
+    fclose(out);
+    return;
+error:
+    fclose(out);
+    REMOVE(header);
+}
+
 const uint8_t ELF64_HEADER[] = {
     0x7f, 'E', 'L', 'F', // Magic
     0x2, // Class Elf 64
@@ -374,7 +403,7 @@ const uint8_t COFF_SYMBOL_ENTRY[] = {
 };
 
 
-void write_coff_header(uint32_t data_size, uint8_t* data, uint32_t no_symbols) {
+void write_coff_header(uint32_t data_size, uint8_t* data, uint32_t no_symbols, bool coff32) {
    memcpy(data, COFF_HEADER, sizeof(COFF_HEADER));
    data_size = data_size + 8 * no_symbols;
    if ((20 + 40 + data_size) % 8 != 0) {
@@ -383,9 +412,13 @@ void write_coff_header(uint32_t data_size, uint8_t* data, uint32_t no_symbols) {
    uint32_t coff_offset = 20 + 40 + data_size;
    WRITE_U32(data + 8, coff_offset);
    WRITE_U32(data + 12, no_symbols * 2);
+   if (coff32) {
+       data[0] = 0x4C;
+       data[1] = 0x01;
+   }
 }
 
-void write_section_header(uint32_t data_size, uint32_t no_symbols, bool readonly, uint8_t* data) {
+void write_coff_section_header(uint32_t data_size, uint32_t no_symbols, bool readonly, uint8_t* data) {
     memcpy(data, COFF_SECTION_HEADER, sizeof(COFF_SECTION_HEADER));
     if (!readonly) {
         memcpy(data, ".data", 6);
@@ -398,10 +431,13 @@ void write_section_header(uint32_t data_size, uint32_t no_symbols, bool readonly
     data[19] = (data_size >> 24) & 0xff;
 }
 
-uint8_t* write_symbol_table(const char** names, const uint64_t *size, uint32_t no_symbols, uint32_t *data_size) {
+uint8_t* write_coff_symbol_table(const char** names, const uint64_t *size, uint32_t no_symbols, bool coff32, uint32_t *data_size) {
     *data_size = 2 * sizeof(COFF_SYMBOL_ENTRY) * no_symbols + 4;
     for (uint32_t i = 0; i < no_symbols; ++i) {
         uint32_t name_len = (uint32_t)strlen(names[i]);
+        if (coff32) {
+            ++name_len;
+        }
         if (name_len > 3) {
             if (name_len > 8) {
                 *data_size += name_len * 2 + 7;
@@ -417,25 +453,48 @@ uint8_t* write_symbol_table(const char** names, const uint64_t *size, uint32_t n
     uint32_t offset = 0;
     for (uint32_t i = 0; i < no_symbols; ++i) {
         uint32_t name_len = (uint32_t)strlen(names[i]);
+        if (coff32) {
+            ++name_len;
+        }
         uint32_t data_offset = 2 * sizeof(COFF_SYMBOL_ENTRY) * i;
         memcpy(data + data_offset, COFF_SYMBOL_ENTRY, sizeof(COFF_SYMBOL_ENTRY));
         memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY), COFF_SYMBOL_ENTRY, sizeof(COFF_SYMBOL_ENTRY));
         if (name_len > 3) {
-            memcpy(strtable + strtable_offset, names[i], name_len);
+            if (coff32) {
+                *(strtable + strtable_offset) = '_';
+                memcpy(strtable + strtable_offset + 1, names[i], name_len - 1);
+            } else {
+                memcpy(strtable + strtable_offset, names[i], name_len);
+            }
             memcpy(strtable + strtable_offset + name_len, "_size", 6);
             WRITE_U32(data + data_offset + 4, strtable_offset);
             strtable_offset += name_len + 6;
         } else {
-           memcpy(data + data_offset, names[i], name_len);
-           memcpy(data + data_offset + name_len, "_size", 5);
+            if (coff32) {
+                *(data + data_offset) = '_';
+                memcpy(data + data_offset + 1, names[i], name_len - 1);
+            } else {
+                memcpy(data + data_offset, names[i], name_len);
+            }
+            memcpy(data + data_offset + name_len, "_size", 5);
         }
         WRITE_U32(data + data_offset + 8, offset);
         if (name_len > 8) {
-            memcpy(strtable + strtable_offset, names[i], name_len + 1);
+            if (coff32) {
+                *(strtable + strtable_offset) = '_';
+                memcpy(strtable + strtable_offset + 1, names[i], name_len);
+            } else {
+                memcpy(strtable + strtable_offset, names[i], name_len + 1);
+            }
             WRITE_U32(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 4, strtable_offset);
             strtable_offset += name_len + 1;
         } else {
-            memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY), names[i], name_len);
+            if (coff32) {
+                *(data + data_offset + sizeof(COFF_SYMBOL_ENTRY)) = '_';
+                memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 1, names[i], name_len - 1);
+            } else {
+                memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY), names[i], name_len);
+            }
         }
         WRITE_U32(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 8, offset + 8);
         offset += (uint32_t)size[i] + 8;
@@ -445,7 +504,7 @@ uint8_t* write_symbol_table(const char** names, const uint64_t *size, uint32_t n
 }
 
 bool write_coff(const char** names, const Filename_t* files, const uint64_t* size,
-        const uint32_t no_symbols, const Filename_t outname, bool readonly) {
+        const uint32_t no_symbols, const Filename_t outname, bool readonly, bool coff32) {
     FILE* out = OPEN(outname, "wb");
     if (out == NULL) {
         PERROR("Could not create file " F_FORMAT LTR("\n"), outname);
@@ -461,8 +520,8 @@ bool write_coff(const char** names, const Filename_t* files, const uint64_t* siz
             return false;
         }
     }
-    write_coff_header(full_size, header, no_symbols);
-    write_section_header(full_size, no_symbols, readonly, header + sizeof(COFF_HEADER));
+    write_coff_header(full_size, header, no_symbols, coff32);
+    write_coff_section_header(full_size, no_symbols, readonly, header + sizeof(COFF_HEADER));
     if (fwrite(header, 1, sizeof(header), out) != sizeof(header)) {
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
@@ -472,7 +531,7 @@ bool write_coff(const char** names, const Filename_t* files, const uint64_t* siz
     }
 
     uint32_t symbol_table_size;
-    uint8_t *symbol_table_buf = write_symbol_table(names, size, no_symbols, &symbol_table_size);
+    uint8_t *symbol_table_buf = write_coff_symbol_table(names, size, no_symbols, coff32, &symbol_table_size);
     if (!write_all(out, symbol_table_size, symbol_table_buf)) {
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
@@ -654,11 +713,28 @@ int ENTRY(int argc, CHAR** argv) {
 #endif
     int status = 1;
     if (argc < 2) {
-        PERROR("" STR_FORMAT, "No input files specified\n");
+#ifdef _WIN32
+#ifdef _WIN64
+#ifdef _MSC_VER
+        PERROR("" STR_FORMAT, "x64-windows MSVC build\n");
+#else
+        PERROR("" STR_FORMAT, "x64-windows MinGW build\n");
+#endif
+#else
+#ifdef _MSC_VER
+        PERROR("" STR_FORMAT, "x86-windows MSVC build\n");
+#else
+        PERROR("" STR_FORMAT, "x86-windows MinGW build\n");
+#endif
+#endif
+#else
+        PERROR("" STR_FORMAT, "x64 GCC build\n");
+#endif
         return 1;
     }
 
     Filename_t outname = NULL;
+    Filename_t header = NULL;
     Filename_t* input_names = malloc(argc * sizeof(Filename_t));
     char** symbol_names = malloc(argc * sizeof(char*));
     uint64_t *input_sizes = malloc(argc * sizeof(uint64_t));
@@ -671,7 +747,7 @@ int ENTRY(int argc, CHAR** argv) {
         if (argv[i][0] == LTR('-')) {
             uint32_t ix = 2;
             CHAR val = argv[i][1];
-            if (val != LTR('o') && val != LTR('s') && val != LTR('f') && val != LTR('w')) {
+            if (val != LTR('o') && val != LTR('s') && val != LTR('f') && val != LTR('w') && val != LTR('h')) {
                 PERROR("Unkown flag " F_FORMAT LTR("\n"), argv[i]);
                 goto cleanup;
             }
@@ -723,6 +799,12 @@ int ENTRY(int argc, CHAR** argv) {
                 }
             } else if (val == LTR('w')) {
                 readonly = false;
+            } else if (val == LTR('h')) {
+                if (header != NULL) {
+                    PERROR("" STR_FORMAT, "Multiple header files specified\n");
+                    goto cleanup;
+                }
+                header = argv[i] + ix;
             }
         } else {
             CHAR *sep = STRCHR(argv[i], ':');
@@ -807,13 +889,6 @@ int ENTRY(int argc, CHAR** argv) {
                 goto cleanup;
             }
         }
-
-        if (out_format == COFF32) {
-            uint32_t len = (uint32_t)strlen(symbol_names[i]);
-            symbol_names[i] = realloc(symbol_names[i], len + 2);
-            memmove(symbol_names[i] + 1, symbol_names[i], len + 1);
-            *symbol_names[i] = '_';
-        }
     }
 
     for (uint32_t i = 0; i < input_count; ++i) {
@@ -831,9 +906,12 @@ int ENTRY(int argc, CHAR** argv) {
     }
 
     if (out_format == COFF64 || out_format  == COFF32) {
-        write_coff((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly);
+        write_coff((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly, out_format == COFF32);
     } else {
         write_elf64((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly);
+    }
+    if (header != NULL) {
+        write_c_header((const char**)symbol_names, input_sizes, input_count, header, readonly);
     }
 
     status = 0;
