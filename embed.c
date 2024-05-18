@@ -270,7 +270,7 @@ void write_elf64_section_headers(uint64_t data_size, uint32_t no_symbols, uint64
     data_size = ALIGN_TO(data_size, 8);
     data_size += 0x40;
     WRITE_U64(out + 2 * 64 + 24, data_size);
-    WRITE_U64(out + 2 * 64 + 32, 24 + sizeof(ELF64_SYMTAB) * no_symbols);
+    WRITE_U64(out + 2 * 64 + 32, (uint64_t)(24 + sizeof(ELF64_SYMTAB) * no_symbols));
     data_size += 24 + sizeof(ELF64_SYMTAB) * no_symbols;
     WRITE_U64(out + 3 * 64 + 24, data_size);
     WRITE_U64(out + 3 * 64 + 32, strtab_size);
@@ -342,7 +342,7 @@ error:
 }
 
 const uint8_t COFF_HEADER[] = {
-    0x0, 0x0, // Machine UNKOWN
+    0x64, 0x86, // Machine x64
     0x1, 0x0, // NumberOfSections 1
     0x0, 0x0, 0x0, 0x0, // Timestamp 0
     0xFF, 0xFF, 0xFF, 0xFF, // Coff table file offset
@@ -444,7 +444,7 @@ uint8_t* write_symbol_table(const char** names, const uint64_t *size, uint32_t n
     return data;
 }
 
-bool write_coff64(const char** names, const Filename_t* files, const uint64_t* size,
+bool write_coff(const char** names, const Filename_t* files, const uint64_t* size,
         const uint32_t no_symbols, const Filename_t outname, bool readonly) {
     FILE* out = OPEN(outname, "wb");
     if (out == NULL) {
@@ -643,7 +643,7 @@ cleanup:
 }
 
 enum Format {
-    COFF64, ELF64, NONE
+    COFF64, COFF32, ELF64, NONE
 };
 
 
@@ -712,6 +712,8 @@ int ENTRY(int argc, CHAR** argv) {
                         out_format = COFF64;
                     } else if (strcmp(format, "elf64") == 0) {
                         out_format = ELF64;
+                    } else if (strcmp(format, "coff32") == 0) {
+                        out_format = COFF32;
                     }
                     free(format);
                 }
@@ -755,7 +757,11 @@ int ENTRY(int argc, CHAR** argv) {
     }
     if (out_format == NONE) {
 #ifdef _WIN32
+    #ifdef _WIN64
         out_format = COFF64;
+    #else
+        out_format = COFF32;
+    #endif
 #else
         out_format = ELF64;
 #endif
@@ -794,13 +800,19 @@ int ENTRY(int argc, CHAR** argv) {
     }  
 
     for (uint32_t i = 0; i < input_count; ++i) {
-        if (symbol_names[i] != NULL) {
-            continue;
-        }
-        symbol_names[i] = get_symbol(format, input_names[i], i);
         if (symbol_names[i] == NULL) {
-            PERROR("Format gives invalid symbol for " F_FORMAT LTR("\n"), input_names[i]);
-            goto cleanup;
+            symbol_names[i] = get_symbol(format, input_names[i], i);
+            if (symbol_names[i] == NULL) {
+                PERROR("Format gives invalid symbol for " F_FORMAT LTR("\n"), input_names[i]);
+                goto cleanup;
+            }
+        }
+
+        if (out_format == COFF32) {
+            uint32_t len = (uint32_t)strlen(symbol_names[i]);
+            symbol_names[i] = realloc(symbol_names[i], len + 2);
+            memmove(symbol_names[i] + 1, symbol_names[i], len + 1);
+            *symbol_names[i] = '_';
         }
     }
 
@@ -818,8 +830,8 @@ int ENTRY(int argc, CHAR** argv) {
                 (unsigned long long)input_sizes[i]);
     }
 
-    if (out_format == COFF64) {
-        write_coff64((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly);
+    if (out_format == COFF64 || out_format  == COFF32) {
+        write_coff((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly);
     } else {
         write_elf64((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly);
     }
