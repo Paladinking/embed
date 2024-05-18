@@ -312,7 +312,7 @@ bool write_elf64(const char** names, const Filename_t* files, const uint64_t* si
     uint8_t shstrtab[sizeof(ELF64_SHSTRTAB)];
     memcpy(shstrtab, ELF64_SHSTRTAB, sizeof(ELF64_SHSTRTAB));
     if (!readonly) {
-        memcpy(shstrtab, ".data", 6);
+        memcpy(shstrtab + 1, ".data", 6);
     }
     if (!write_all(out, symtab_size, symtab) || !write_all(out, sizeof(ELF64_SHSTRTAB), shstrtab)) {
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
@@ -664,17 +664,18 @@ int ENTRY(int argc, CHAR** argv) {
     uint64_t *input_sizes = malloc(argc * sizeof(uint64_t));
     char* format = NULL;
     enum Format out_format = NONE;
+    bool readonly = true;
 
     uint32_t input_count = 0;
     for (int i = 1; i < argc; ++i) {
         if (argv[i][0] == LTR('-')) {
             uint32_t ix = 2;
             CHAR val = argv[i][1];
-            if (val != LTR('o') && val != LTR('s') && val != LTR('f')) {
+            if (val != LTR('o') && val != LTR('s') && val != LTR('f') && val != LTR('w')) {
                 PERROR("Unkown flag " F_FORMAT LTR("\n"), argv[i]);
                 goto cleanup;
             }
-            if (val != LTR('\0') && argv[i][2] == LTR('\0')) {
+            if (val != LTR('w') && val != LTR('\0') && argv[i][2] == LTR('\0')) {
                 ++i;
                 ix = 0;
                 if (i == argc) {
@@ -687,7 +688,7 @@ int ENTRY(int argc, CHAR** argv) {
                     PERROR("" STR_FORMAT, "Extra output files specified\n");
                     goto cleanup;
                 }
-                uint32_t len = (uint32_t)STRLEN(argv[i] + ix);
+                uint32_t len = 1 + (uint32_t)STRLEN(argv[i] + ix);
                 outname = malloc(len * sizeof(CHAR));
                 memcpy(outname, argv[i] + ix, len * sizeof(CHAR));
             } else if (val == LTR('s')) {
@@ -718,6 +719,8 @@ int ENTRY(int argc, CHAR** argv) {
                     PERROR("Unsupported object format " F_FORMAT LTR("\n"), argv[i] + ix);
                     goto cleanup;
                 }
+            } else if (val == LTR('w')) {
+                readonly = false;
             }
         } else {
             CHAR *sep = STRCHR(argv[i], ':');
@@ -750,6 +753,13 @@ int ENTRY(int argc, CHAR** argv) {
         PERROR("" STR_FORMAT, "No input files specified\n");
         goto cleanup;
     }
+    if (out_format == NONE) {
+#ifdef _WIN32
+        out_format = COFF64;
+#else
+        out_format = ELF64;
+#endif
+    }
     if (outname == NULL) {
         outname = malloc(10 * sizeof(CHAR));
         if (out_format == COFF64) {
@@ -761,13 +771,6 @@ int ENTRY(int argc, CHAR** argv) {
     if (format == NULL) {
         format = malloc(5);
         memcpy(format, "%f%e", 5);
-    }
-    if (out_format == NONE) {
-#ifdef _WIN32
-        out_format = COFF64;
-#else
-        out_format = ELF64;
-#endif
     }
 
     for (uint32_t i = 0; i < input_count; ++i) {
@@ -816,9 +819,9 @@ int ENTRY(int argc, CHAR** argv) {
     }
 
     if (out_format == COFF64) {
-        write_coff64((const char**)symbol_names, input_names, input_sizes, input_count, outname, true);
+        write_coff64((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly);
     } else {
-        write_elf64((const char**)symbol_names, input_names, input_sizes, input_count, outname, true);
+        write_elf64((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly);
     }
 
     status = 0;
