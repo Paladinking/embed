@@ -80,7 +80,8 @@ bool write_all(FILE* file, uint32_t size, const uint8_t* buf) {
     return true;
 }
 
-bool write_all_files(FILE* out, const Filename_t* names, const uint64_t* sizes, uint32_t no_entries, const Filename_t outname, uint64_t header_size) {
+bool write_all_files(FILE* out, const Filename_t* names, const uint64_t* sizes,
+        uint32_t no_entries, const Filename_t outname, uint64_t header_size, uint64_t alignment) {
     for (uint32_t i = 0; i < no_entries; ++i) {
         header_size += sizes[i];
         FILE *in = OPEN(names[i], "rb");
@@ -114,8 +115,8 @@ bool write_all_files(FILE* out, const Filename_t* names, const uint64_t* sizes, 
         fclose(in);
     }
     header_size += 8 * no_entries;
-    if (ALIGN_DIFF(header_size, 8) != 0) {
-        uint32_t padding = ALIGN_DIFF(header_size, 8);
+    if (ALIGN_DIFF(header_size, alignment) != 0) {
+        uint32_t padding = ALIGN_DIFF(header_size, alignment);
         uint8_t null_data[] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
         if (fwrite(null_data, 1, padding, out) != padding) {
             PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
@@ -174,7 +175,27 @@ const uint8_t ELF64_HEADER[] = {
     0x4, 0x0 // Index of .shstrtab
 };
 
-const uint8_t ELF64_SHSTRTAB[] = {
+const uint8_t ELF32_HEADER[] = {
+    0x7f, 'E', 'L', 'F', // Magic
+    0x1, // Class Elf 32
+    0x1, // Data encoding little endian
+    0x1, // Version 1
+    0x0, 0x0, // ABI System V version 0
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Padding
+    0x1, 0x0, // Type relocatable object
+    3, 0x0, // Machine I80386
+    0x1, 0x0, 0x0, 0x0, // Object version 1
+    0x0, 0x0, 0x0, 0x0, // Entry point none
+    0x0, 0x0, 0x0, 0x0, // Program header offset
+    0xFF, 0xFF, 0xFF, 0xFF, // Section header offset
+    0x0, 0x0, 0x0, 0x0, // Flags 0
+    0x34, 0x0, // Elf header size 52
+    0x0, 0x0, 0x0, 0x0, // Size and number of program headers
+    0x28, 0x0, 0x5, 0x0, // Size and number of section headers
+    0x4, 0x0 // Index of .shstrtab
+};
+
+const uint8_t ELF_SHSTRTAB[] = {
     '\0',
     '.', 'r', 'd', 'a', 't', 'a', '\0',
     '.', 's', 'y', 'm', 't', 'a', 'b', '\0',
@@ -239,6 +260,63 @@ const uint8_t ELF64_SECTION_HEADERS[] = {
     0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 // .shstrtab entry size 0
 };
 
+const uint8_t ELF32_SECTION_HEADERS[] = {
+    0x0, 0x0, 0x0, 0x0, // NULL
+    0x0, 0x0, 0x0, 0x0, // NULL
+    0x0, 0x0, 0x0, 0x0, // NULL 
+    0x0, 0x0, 0x0, 0x0, // NULL
+    0x0, 0x0, 0x0, 0x0, // NULL
+    0x0, 0x0, 0x0, 0x0, // NULL
+    0x0, 0x0, 0x0, 0x0, // NULL
+    0x0, 0x0, 0x0, 0x0, // NULL
+    0x0, 0x0, 0x0, 0x0, // NULL
+    0x0, 0x0, 0x0, 0x0, // NULL
+
+    0x1, 0x0, 0x0, 0x0, // .(r)data name offset
+    0x1, 0x0, 0x0, 0x0, // .(r)data type PROGBITS
+    0x2, 0x0, 0x0, 0x0, // .(r)data flags A
+    0x0, 0x0, 0x0, 0x0, // .(r)data address
+    0x34, 0x0, 0x0, 0x0, // .(r)data file offset
+    0xFF, 0xFF, 0xFF, 0xFF, // .(r)data size
+    0x0, 0x0, 0x0, 0x0, // .(r)data link 0
+    0x0, 0x0, 0x0, 0x0, // .(r)data info 0
+    0x1, 0x0, 0x0, 0x0, // .(r)data alignment 1
+    0x0, 0x0, 0x0, 0x0, // .(r)data entry size 0
+                                            //
+    0x8, 0x0, 0x0, 0x0, // .symtab name offset
+    0x2, 0x0, 0x0, 0x0, // .symtab type SYMTAB
+    0x0, 0x0, 0x0, 0x0, // .symtab flags 0
+    0x0, 0x0, 0x0, 0x0, // .symtab address 0
+    0xFF, 0xFF, 0xFF, 0xFF, // .symtab file offset
+    0xFF, 0xFF, 0xFF, 0xFF, // .symtab size
+    0x3, 0x0, 0x0, 0x0, // .symtab link 0
+    0x1, 0x0, 0x0, 0x0, // .symtab info 1 local symbol
+    0x4, 0x0, 0x0, 0x0, // .symtab alignment 4
+    0x10, 0x0, 0x0, 0x0, // .symtab entry size 0x18
+
+    0x10, 0x0, 0x0, 0x0, // .strtab name offset
+    0x3, 0x0, 0x0, 0x0, // .strtab type STRTAB
+    0x0, 0x0, 0x0, 0x0, // .strtab flags 0
+    0x0, 0x0, 0x0, 0x0, // .strtab address 0
+    0xFF, 0xFF, 0xFF, 0xFF, // .strtab file offset
+    0xFF, 0xFF, 0xFF, 0xFF, // .strtab size
+    0x0, 0x0, 0x0, 0x0, // strtab link 0
+    0x0, 0x0, 0x0, 0x0, // strtab info 0
+    0x1, 0x0, 0x0, 0x0, // .strtab alignment 1
+    0x1, 0x0, 0x0, 0x0, // .strtab entry size 0
+
+    0x18, 0x0, 0x0, 0x0, // .shstrtab name offset
+    0x3, 0x0, 0x0, 0x0, // .shstrtab type STRTAB
+    0x0, 0x0, 0x0, 0x0, // .shstrtab flags 0
+    0x0, 0x0, 0x0, 0x0, // .shstrtab address 0
+    0xFF, 0xFF, 0xFF, 0xFF, // .shstrtab file offset
+    0x22, 0x0, 0x0, 0x0, // .shstrtab size
+    0x0, 0x0, 0x0, 0x0, // shstrtab link 0
+    0x0, 0x0, 0x0, 0x0, // shstrtab info 0
+    0x1, 0x0, 0x0, 0x0, // .shstrtab alignment 1
+    0x1, 0x0, 0x0, 0x0, // .shstrtab entry size 0
+};
+
 const uint8_t ELF64_SYMTAB[] = {
     0xFF, 0xFF, 0xFF, 0xFF, // symbol size name
     0x10, 0x0, // symbol size info GLOBAL NOTYPE, reserved 0
@@ -252,13 +330,35 @@ const uint8_t ELF64_SYMTAB[] = {
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // symbol size
 };
 
+const uint8_t ELF32_SYMTAB[] = {
+    0xFF, 0xFF, 0xFF, 0xFF, // symbol size name
+    0xFF, 0xFF, 0xFF, 0xFF, // symbol size value
+    0x0, 0x0, 0x0, 0x0, // symbol size size
+    0x10, 0x0, // symbol size info GLOBAL NOTYPE, reserved 0
+    0x1, 0x0, // symbol size section index
+    0xFF, 0xFF, 0xFF, 0xFF, // symbol name
+    0xFF, 0xFF, 0xFF, 0xFF, // symbol value
+    0x0, 0x0, 0x0, 0x0, // symbol size
+    0x10, 0x0, // symbo info GLOBAL NOTYPE, reserved 0
+    0x1, 0x0 // symbol section index
+};
+
 void write_elf64_header(uint64_t data_size, uint32_t no_symbols, uint64_t strtab_size, uint8_t* out) {
     memcpy(out, ELF64_HEADER, sizeof(ELF64_HEADER));
     data_size += 8 * no_symbols + sizeof(ELF64_HEADER);
     data_size = ALIGN_TO(data_size, 8);
-    data_size += 24 + no_symbols * sizeof(ELF64_SYMTAB) + sizeof(ELF64_SHSTRTAB) + strtab_size;
+    data_size += 24 + no_symbols * sizeof(ELF64_SYMTAB) + sizeof(ELF_SHSTRTAB) + strtab_size;
     data_size = ALIGN_TO(data_size, 8);
     WRITE_U64(out + 40, data_size);
+}
+
+void write_elf32_header(uint32_t data_size, uint32_t no_symbols, uint32_t strtab_size, uint8_t* out) {
+    memcpy(out, ELF32_HEADER, sizeof(ELF32_HEADER));
+    data_size += 8 * no_symbols + sizeof(ELF32_HEADER);
+    data_size = ALIGN_TO(data_size, 4);
+    data_size += 16 + no_symbols * sizeof(ELF32_SYMTAB) + sizeof(ELF_SHSTRTAB) + strtab_size;
+    data_size = ALIGN_TO(data_size, 4);
+    WRITE_U32(out + 32, data_size);
 }
 
 uint8_t* write_elf64_symtab(const char** names, const uint64_t *size, uint32_t no_symbols, uint64_t *data_size) {
@@ -289,6 +389,34 @@ uint8_t* write_elf64_symtab(const char** names, const uint64_t *size, uint32_t n
     return data;
 }
 
+uint8_t* write_elf32_symtab(const char** names, const uint64_t *size, uint32_t no_symbols, uint64_t *data_size) {
+    *data_size = 16 + sizeof(ELF32_SYMTAB) * no_symbols + 1;
+    for (uint32_t i = 0; i < no_symbols; ++i) {
+        *data_size += 2 * strlen(names[i]) + 7;
+    } 
+    uint8_t* data= malloc(*data_size);
+    uint8_t* strtab = data + 16 + sizeof(ELF32_SYMTAB) * no_symbols;
+    *strtab = 0;
+    uint32_t strtab_ix = 1;
+    uint32_t data_ix = 0;
+    memset(data, 0, 16);
+    for (uint32_t i = 0; i < no_symbols; ++i) {
+        uint8_t* base = data + 16 + sizeof(ELF32_SYMTAB) * i;
+        memcpy(base, ELF32_SYMTAB, sizeof(ELF32_SYMTAB));
+        uint32_t name_len = (uint32_t) strlen(names[i]);
+        memcpy(strtab + strtab_ix, names[i], name_len);
+        memcpy(strtab + strtab_ix + name_len, "_size", 6);
+        memcpy(strtab + strtab_ix + name_len + 6, names[i], name_len + 1);
+        WRITE_U32(base, strtab_ix);
+        WRITE_U32(base + 16, strtab_ix + name_len + 6);
+        strtab_ix += 2 * name_len + 7;
+        WRITE_U32(base + 4, data_ix);
+        WRITE_U32(base + 16 + 4, data_ix + 8);
+        data_ix += 8 + size[i];
+    }
+    return data;
+}
+
 void write_elf64_section_headers(uint64_t data_size, uint32_t no_symbols, uint64_t strtab_size, bool readonly, uint8_t* out) {
     memcpy(out, ELF64_SECTION_HEADERS, sizeof(ELF64_SECTION_HEADERS));
     if (!readonly) {
@@ -307,9 +435,27 @@ void write_elf64_section_headers(uint64_t data_size, uint32_t no_symbols, uint64
     WRITE_U64(out + 4 * 64 + 24, data_size);
 }
 
+void write_elf32_section_headers(uint32_t data_size, uint32_t no_symbols, uint32_t strtab_size, bool readonly, uint8_t* out) {
+    memcpy(out, ELF32_SECTION_HEADERS, sizeof(ELF32_SECTION_HEADERS));
+    if (!readonly) {
+        out[48] |= 1;
+    }
+    data_size += 8 * no_symbols;
+    WRITE_U32(out + 40 + 20, data_size);
+    data_size = ALIGN_TO(data_size, 4);
+    data_size += 0x34;
+    WRITE_U32(out + 2 * 40 + 16, data_size);
+    WRITE_U32(out + 2 * 40 + 20, 16 + sizeof(ELF32_SYMTAB) * no_symbols);
+    data_size += 16 + sizeof(ELF32_SYMTAB) * no_symbols;
+    WRITE_U32(out + 3 * 40 + 16, data_size);
+    WRITE_U32(out + 3 * 40 + 20, strtab_size);
+    data_size += strtab_size;
+    WRITE_U32(out + 4 * 40 + 16, data_size);
+}
 
-bool write_elf64(const char** names, const Filename_t* files, const uint64_t* size,
-        const uint32_t no_symbols, const Filename_t outname, bool readonly) {
+
+bool write_elf(const char** names, const Filename_t* files, const uint64_t* size,
+        const uint32_t no_symbols, const Filename_t outname, bool readonly, bool elf32) {
     FILE *out = OPEN(outname, "wb");
     if (out == NULL) {
         PERROR("Could not create file " F_FORMAT LTR("\n"), outname);
@@ -325,39 +471,66 @@ bool write_elf64(const char** names, const Filename_t* files, const uint64_t* si
             PERROR("" STR_FORMAT, "Total length of all symbol names to large\n");
             goto error;
         }
+        if (elf32 && data_size > UINT32_MAX) {
+            PERROR("" STR_FORMAT, "Elf32 object does not fit all data\n");
+            goto error;
+        }
     }
 
     uint8_t header[sizeof(ELF64_HEADER)];
-    write_elf64_header(data_size, no_symbols, strtab_size, header);
-    if (!write_all(out, sizeof(header), header)) {
+    uint32_t hsize;
+    if (elf32) {
+        hsize = sizeof(ELF32_HEADER);
+        write_elf32_header(data_size, no_symbols, strtab_size, header);
+    } else {
+        hsize = sizeof(ELF64_HEADER);
+        write_elf64_header(data_size, no_symbols, strtab_size, header);
+    }
+    if (!write_all(out, hsize, header)) {
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
-    if (!write_all_files(out, files, size, no_symbols, outname, sizeof(header))) {
+
+    if (!write_all_files(out, files, size, no_symbols, outname, hsize, elf32 ? 4 : 8)) {
         goto error;
     }
     uint64_t symtab_size;
-    uint8_t *symtab = write_elf64_symtab(names, size, no_symbols, &symtab_size);
-    uint8_t shstrtab[sizeof(ELF64_SHSTRTAB)];
-    memcpy(shstrtab, ELF64_SHSTRTAB, sizeof(ELF64_SHSTRTAB));
+    uint8_t *symtab;
+    if (elf32) {
+        symtab = write_elf32_symtab(names, size, no_symbols, &symtab_size);
+    } else {
+        symtab = write_elf64_symtab(names, size, no_symbols, &symtab_size);
+    }
+    uint8_t shstrtab[sizeof(ELF_SHSTRTAB)];
+    memcpy(shstrtab, ELF_SHSTRTAB, sizeof(ELF_SHSTRTAB));
     if (!readonly) {
         memcpy(shstrtab + 1, ".data", 6);
     }
-    if (!write_all(out, symtab_size, symtab) || !write_all(out, sizeof(ELF64_SHSTRTAB), shstrtab)) {
+    if (!write_all(out, symtab_size, symtab) || !write_all(out, sizeof(ELF_SHSTRTAB), shstrtab)) {
+        free(symtab);
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
-    uint64_t fsize = symtab_size + sizeof(ELF64_SHSTRTAB);
-    if (ALIGN_DIFF(fsize, 8) != 0) {
+    free(symtab);
+    uint64_t fsize = symtab_size + sizeof(ELF_SHSTRTAB);
+    uint32_t align = elf32 ? 4 : 8;
+    if (ALIGN_DIFF(fsize, align) != 0) {
         uint8_t padding[] = {0, 0, 0, 0, 0, 0, 0, 0};
-        if (fwrite(padding, 1, ALIGN_DIFF(fsize, 8), out) != ALIGN_DIFF(fsize, 8)) {
+        if (fwrite(padding, 1, ALIGN_DIFF(fsize, align), out) != ALIGN_DIFF(fsize, align)) {
             PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
             goto error;
         }
     }
     uint8_t section_headers[sizeof(ELF64_SECTION_HEADERS)];
-    write_elf64_section_headers(data_size, no_symbols, strtab_size, readonly, section_headers);
-    if (!write_all(out, sizeof(ELF64_SECTION_HEADERS), section_headers)) {
+    uint32_t sh_size;
+    if (elf32) {
+        sh_size = sizeof(ELF32_SECTION_HEADERS);
+        write_elf32_section_headers(data_size, no_symbols, strtab_size, readonly, section_headers);
+    } else {
+        sh_size = sizeof(ELF64_SECTION_HEADERS);
+        write_elf64_section_headers(data_size, no_symbols, strtab_size, readonly, section_headers);
+    }
+    if (!write_all(out, sh_size, section_headers)) {
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
@@ -526,7 +699,7 @@ bool write_coff(const char** names, const Filename_t* files, const uint64_t* siz
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
-    if (!write_all_files(out, files, size, no_symbols, outname, sizeof(COFF_HEADER) + sizeof(COFF_SECTION_HEADER))) {
+    if (!write_all_files(out, files, size, no_symbols, outname, sizeof(COFF_HEADER) + sizeof(COFF_SECTION_HEADER), 8)) {
         goto error;
     }
 
@@ -702,7 +875,7 @@ cleanup:
 }
 
 enum Format {
-    COFF64, COFF32, ELF64, NONE
+    COFF64, COFF32, ELF64, ELF32, NONE
 };
 
 
@@ -728,7 +901,11 @@ int ENTRY(int argc, CHAR** argv) {
 #endif
 #endif
 #else
+#ifdef __x86_64__
         PERROR("" STR_FORMAT, "x64 GCC build\n");
+#else
+        PERROR("" STR_FORMAT, "x86 GCC build\n");
+#endif
 #endif
         return 1;
     }
@@ -790,6 +967,8 @@ int ENTRY(int argc, CHAR** argv) {
                         out_format = ELF64;
                     } else if (strcmp(format, "coff32") == 0) {
                         out_format = COFF32;
+                    } else if (strcmp(format, "elf32") == 0) {
+                        out_format = ELF32;
                     }
                     free(format);
                 }
@@ -845,7 +1024,11 @@ int ENTRY(int argc, CHAR** argv) {
         out_format = COFF32;
     #endif
 #else
+    #ifdef __x86_64__
         out_format = ELF64;
+    #else
+        out_format = ELF32;
+    #endif
 #endif
     }
     if (outname == NULL) {
@@ -908,7 +1091,7 @@ int ENTRY(int argc, CHAR** argv) {
     if (out_format == COFF64 || out_format  == COFF32) {
         write_coff((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly, out_format == COFF32);
     } else {
-        write_elf64((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly);
+        write_elf((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly, out_format == ELF32);
     }
     if (header != NULL) {
         write_c_header((const char**)symbol_names, input_sizes, input_count, header, readonly);
