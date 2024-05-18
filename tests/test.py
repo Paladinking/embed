@@ -27,11 +27,11 @@ TARGETS = {
 }
 
 MAKE_CC = {
-    'VC64': lambda src, obj, out: ['cl', src] + ([obj] if obj else []) + ['/nologo', f'/Fe:{out}.exe'],
-    'VC86': lambda src, obj, out: ['cl', src] + ([obj] if obj else []) + ['/nologo', f'/Fe:{out}.exe'],
-    'MINGW': lambda src, obj, out: ['gcc', src] + ([obj] if obj else []) + ['-o', f'{out}.exe'],
-    'GCC64': lambda src, obj, out:  ['wsl', 'gcc', src] + ([obj] if obj else []) + ['-o', f'{out}'],
-    'GCC32': lambda src, obj, out:  ['wsl', 'gcc', '-m32', src] + ([obj] if obj else []) + ['-o', f'{out}']
+    'VC64': lambda src, obj, out: (['cl', src] + ([obj] if obj else []) + ['/nologo', f'/Fe:{out}.exe'], [f'{out}.exe']),
+    'VC86': lambda src, obj, out: (['cl', src] + ([obj] if obj else []) + ['/nologo', f'/Fe:{out}.exe'], [f'{out}.exe']),
+    'MINGW': lambda src, obj, out: (['gcc', src] + ([obj] if obj else []) + ['-municode', '-o', f'{out}.exe'], [f'{out}.exe']),
+    'GCC64': lambda src, obj, out:  (['wsl', 'gcc', src] + ([obj] if obj else []) + ['-o', f'{out}'], ['wsl', f'./{out}']),
+    'GCC32': lambda src, obj, out:  (['wsl', 'gcc', '-m32', src] + ([obj] if obj else []) + ['-o', f'{out}'], ['wsl', f'./{out}'])
 }
 
 COFF64_TARGETS = ['MSVC', 'MINGW']
@@ -51,20 +51,20 @@ def create_test(obj_name, cmp_name, fmt, files, executable):
                 file.write(f'    write_file("out{obj_name}-{cmp_name}-{target}/{nam}", {symbol}, {symbol}_size);\n')
             file.write('return 0;\n}\n')
 
-        cmd = [executable, f"-oassets{obj_name}-{cmp_name}-{target}.obj", f"-hassets{obj_name}-{cmp_name}-{target}.h", f"-f{fmt}"] + files
+        cmd = executable + [f"-oassets{obj_name}-{cmp_name}-{target}.obj", f"-hassets{obj_name}-{cmp_name}-{target}.h", f"-f{fmt}"] + files
         subprocess.run(cmd)
 
 
 def main():
     files = glob.glob("assets/**/*")
     if len(sys.argv) > 2 and sys.argv[1] == '--create':
-        cmd = MAKE_CC[sys.argv[2]]('../embed.c', '', f'embed-{sys.argv[2]}')
-        print(cmd)
+        cmd, exe = MAKE_CC[sys.argv[2]]('../embed.c', '', f'embed-{sys.argv[2]}')
+        print(cmd, exe)
         subprocess.run(cmd)
-        create_test("Coff64", sys.argv[2], "coff64", files, f"./embed-{sys.argv[2]}")
-        create_test("Coff32", sys.argv[2], "coff32", files, f"./embed-{sys.argv[2]}")
-        create_test("Elf64", sys.argv[2], "elf64", files, f"./embed-{sys.argv[2]}")
-        create_test("Elf32", sys.argv[2], "elf32", files, f"./embed-{sys.argv[2]}")
+        create_test("Coff64", sys.argv[2], "coff64", files, exe)
+        create_test("Coff32", sys.argv[2], "coff32", files, exe)
+        create_test("Elf64", sys.argv[2], "elf64", files, exe)
+        create_test("Elf32", sys.argv[2], "elf32", files, exe)
         return
 
     if len(sys.argv) > 2 and sys.argv[1] == '--run':
