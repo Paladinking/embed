@@ -920,6 +920,8 @@ int ENTRY(int argc, CHAR** argv) {
 #else
 #ifdef __x86_64__
         PERROR("" STR_FORMAT, "x64 GCC build\n");
+#elif defined __arm__
+        PERROR("" STR_FORMAT, "arm GCC build\n");
 #else
         PERROR("" STR_FORMAT, "x86 GCC build\n");
 #endif
@@ -1045,7 +1047,7 @@ int ENTRY(int argc, CHAR** argv) {
 #else
     #ifdef __x86_64__
         out_format = ELF64;
-    #elifdef __arm__
+    #elif defined __arm__
         out_format = ELF32_ARM;
     #else
         out_format = ELF32;
