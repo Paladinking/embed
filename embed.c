@@ -786,7 +786,8 @@ char* get_symbol(const char* format, const Filename_t filename, uint32_t n) {
         }
         CHAR old = *c;
         if (dir_count == 10) {
-            memmove(dirs, dirs + 1, 9 * sizeof(char*));
+            free(dirs[9]);
+            memmove(dirs + 1, dirs, 9 * sizeof(char*));
         } else {
             ++dir_count;
         }
