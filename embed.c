@@ -1045,6 +1045,8 @@ int ENTRY(int argc, CHAR** argv) {
 #else
     #ifdef __x86_64__
         out_format = ELF64;
+    #elifdef __arm__
+        out_format = ELF32_ARM;
     #else
         out_format = ELF32;
     #endif
