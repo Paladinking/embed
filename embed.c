@@ -1,9 +1,9 @@
 #define _CRT_SECURE_NO_DEPRECATE
-#include <stdio.h>
-#include <string.h>
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #ifdef _WIN32
 #ifndef UNICODE
@@ -12,10 +12,10 @@
 #ifndef _UNICODE
 #define _UNICODE
 #endif
-#include <wchar.h>
-#include <io.h>
 #include <fcntl.h>
-typedef wchar_t* Filename_t;
+#include <io.h>
+#include <wchar.h>
+typedef wchar_t *Filename_t;
 #define OPEN(filename, mode) _wfopen(filename, L##mode)
 #define PERROR(format, ...) fwprintf(stderr, L##format, __VA_ARGS__)
 #define REMOVE(filename) _wremove(filename)
@@ -23,8 +23,9 @@ typedef wchar_t* Filename_t;
 #define CHAR wchar_t
 #define LTR(c) L##c
 #define STRLEN wcslen
+#define STRCMP wcscmp
 #define STRCHR(s, l) wcschr(s, L##l)
-#define realpath(N,R) _wfullpath((R),(N),256)
+#define realpath(N, R) _wfullpath((R), (N), 256)
 #ifdef _MSC_VER
 #define STR_FORMAT L"%S"
 #define F_FORMAT L"%s"
@@ -33,7 +34,7 @@ typedef wchar_t* Filename_t;
 #define F_FORMAT L"%S"
 #endif
 #else
-typedef char* Filename_t;
+typedef char *Filename_t;
 #define OPEN(filename, mode) fopen(filename, mode)
 #define PERROR(...) fprintf(stderr, __VA_ARGS__)
 #define REMOVE(filename) remove(filename)
@@ -41,41 +42,92 @@ typedef char* Filename_t;
 #define CHAR char
 #define LTR(c) c
 #define STRLEN strlen
+#define STRCMP strcmp
 #define STRCHR(s, l) strchr(s, l)
 #define STR_FORMAT "%s"
 #define F_FORMAT "%s"
 #endif
 
 enum Format {
-    COFF64, COFF32, COFF64_ARM, COFF32_ARM, ELF64, ELF32, ELF64_ARM, ELF32_ARM, NONE_FORMAT
+    COFF64,
+    COFF32,
+    COFF64_ARM,
+    COFF32_ARM,
+    ELF64,
+    ELF32,
+    ELF64_ARM,
+    ELF32_ARM,
+    NONE_FORMAT
 };
 
-const char* format_names[] = {
-    "coff64", "coff32", "coff64-arm", "coff32-arm", "elf64", "elf32", "elf32-arm"
-};
+#if (defined _WIN32 || defined __CYGWIN__) && (defined _M_ARM64 || defined __aarch64__)
+const enum Format DEFAULT_FORMAT = COFF64_ARM;
+const char* HOST_NAME = "Windows arm64";
+#elif (defined _WIN32 || defined __CYGWIN__) && (defined _M_X64 || defined __x86_64__)
+const enum Format DEFAULT_FORMAT = COFF64;
+const char* HOST_NAME = "Windows x64";
+#elif (defined _WIN32 || defined __CYGWIN__) && (defined _M_ARM || defined __arm__)
+const enum Format DEFAULT_FORMAT = COFF32_ARM;
+const char* HOST_NAME = "Windows arm";
+#elif (defined _WIN32 || defined __CYGWIN__) && (defined _M_IX86 || defined __i386__)
+const enum Format DEFUALT_FORMAT = COFF32;
+const char* HOST_NAME = "Windows x86";
+#elif (defined __linux__) && (defined _M_ARM || defined __arm__)
+const enum Format DEFUALT_FORMAT = ELF32_ARM;
+const char* HOST_NAME = "Linux arm";
+#elif (defined __linux__) && (defined _M_IX86 || defined __i386__)
+const enum Format DEFAULT_FORMAT = ELF32;
+const char* HOST_NAME = "Linux x86";
+#elif (defined __linux__) && (defined _M_ARM64 || defined __aarch64__)
+const enum Format DEFAULT_FORMAT = ELF64_ARM;
+const char* HOST_NAME = "Linux arm64";
+#elif (defined __linux__) && (defined _M_X64 || defined __x86_64__)
+const enum Format DEFAULT_FORMAT = ELF64;
+const char* HOST_NAME = "Linux x64";
+#elif (defined _M_X64 || defined __x86_64__)
+const enum Format DEFAULT_FORMAT = ELF64;
+const char* HOST_NAME = "Unkown x64";
+#elif (defined _M_IX86 || defined __i386__)
+const enum Format DEFAULT_FORMAT = ELF32;
+const char* HOST_NAME = "Unkown x86";
+#elif (defined _M_ARM || defined __arm__)
+const enum Format DEFAULT_FORMAT = ELF32_ARM;
+const char* HOST_NAME = "Unkown arm";
+#elif (defined _M_ARM64 || defined __aarch64__)
+const enum Format DEFAULT_FORMAT = ELF64_ARM;
+const char* HOST_NAME = "Unkown arm64";
+#else
+const enum Format DEFAULT_FORMAT = ELF64;
+const char* HOST_NAME = "Unkown";
+#endif
 
-#define WRITE_U32(ptr, val) do { \
-    (ptr)[0] = (val) & 0xff; \
-    (ptr)[1] = ((val) >> 8) & 0xff; \
-    (ptr)[2] = ((val) >> 16) & 0xff; \
-    (ptr)[3] = ((val) >> 24) & 0xff; \
-} while (0)
+const char *format_names[] = {"coff64", "coff32", "coff64-arm", "coff32-arm",
+                              "elf64",  "elf32",  "elf32-arm"};
 
-#define WRITE_U64(ptr, val) do {\
-    (ptr)[0] = (val) & 0xff; \
-    (ptr)[1] = ((val) >> 8) & 0xff; \
-    (ptr)[2] = ((val) >> 16) & 0xff; \
-    (ptr)[3] = ((val) >> 24) & 0xff; \
-    (ptr)[4] = ((val) >> 32) & 0xff; \
-    (ptr)[5] = ((val) >> 40) & 0xff; \
-    (ptr)[6] = ((val) >> 48) & 0xff; \
-    (ptr)[7] = ((val) >> 56) & 0xff; \
-} while (0)
+#define WRITE_U32(ptr, val)                                                    \
+    do {                                                                       \
+        (ptr)[0] = (val) & 0xff;                                               \
+        (ptr)[1] = ((val) >> 8) & 0xff;                                        \
+        (ptr)[2] = ((val) >> 16) & 0xff;                                       \
+        (ptr)[3] = ((val) >> 24) & 0xff;                                       \
+    } while (0)
+
+#define WRITE_U64(ptr, val)                                                    \
+    do {                                                                       \
+        (ptr)[0] = (val) & 0xff;                                               \
+        (ptr)[1] = ((val) >> 8) & 0xff;                                        \
+        (ptr)[2] = ((val) >> 16) & 0xff;                                       \
+        (ptr)[3] = ((val) >> 24) & 0xff;                                       \
+        (ptr)[4] = ((val) >> 32) & 0xff;                                       \
+        (ptr)[5] = ((val) >> 40) & 0xff;                                       \
+        (ptr)[6] = ((val) >> 48) & 0xff;                                       \
+        (ptr)[7] = ((val) >> 56) & 0xff;                                       \
+    } while (0)
 
 #define ALIGN_DIFF(val, p) (((val) % (p) == 0) ? (0) : (p) - ((val) % (p)))
 #define ALIGN_TO(val, p) (val + ALIGN_DIFF(val, p))
 
-bool write_all(FILE* file, uint32_t size, const uint8_t* buf) {
+bool write_all(FILE *file, uint32_t size, const uint8_t *buf) {
     uint32_t written = 0;
     while (written < size) {
         uint32_t w = (uint32_t)fwrite(buf + written, 1, size - written, file);
@@ -87,8 +139,9 @@ bool write_all(FILE* file, uint32_t size, const uint8_t* buf) {
     return true;
 }
 
-bool write_all_files(FILE* out, const Filename_t* names, const uint64_t* sizes,
-        uint32_t no_entries, const Filename_t outname, uint64_t header_size, uint64_t alignment) {
+bool write_all_files(FILE *out, const Filename_t *names, const uint64_t *sizes,
+                     uint32_t no_entries, const Filename_t outname,
+                     uint64_t header_size, uint64_t alignment) {
     for (uint32_t i = 0; i < no_entries; ++i) {
         header_size += sizes[i];
         FILE *in = OPEN(names[i], "rb");
@@ -133,8 +186,9 @@ bool write_all_files(FILE* out, const Filename_t* names, const uint64_t* sizes,
     return true;
 }
 
-void write_c_header(const char** symbol_names, uint64_t *input_sizes, uint32_t input_count, Filename_t header, bool readonly) {
-    FILE* out = OPEN(header, "w");
+void write_c_header(const char **symbol_names, uint64_t *input_sizes,
+                    uint32_t input_count, Filename_t header, bool readonly) {
+    FILE *out = OPEN(header, "w");
     if (out == NULL) {
         PERROR("Could not open " F_FORMAT LTR("\n"), header);
         return;
@@ -145,11 +199,14 @@ void write_c_header(const char** symbol_names, uint64_t *input_sizes, uint32_t i
         goto error;
     }
     for (uint32_t i = 0; i < input_count; ++i) {
-        const char* format = "extern uint64_t %s_size;\nextern uint8_t %s[%llu];\n\n";
+        const char *format =
+            "extern uint64_t %s_size;\nextern uint8_t %s[%llu];\n\n";
         if (readonly) {
-            format = "extern const uint64_t %s_size;\nextern const uint8_t %s[%llu];\n\n";
+            format = "extern const uint64_t %s_size;\nextern const uint8_t "
+                     "%s[%llu];\n\n";
         }
-        if (fprintf(out, format, symbol_names[i], symbol_names[i], (unsigned long long)input_sizes[i]) < 0) {
+        if (fprintf(out, format, symbol_names[i], symbol_names[i],
+                    (unsigned long long)input_sizes[i]) < 0) {
             PERROR("Writing to " F_FORMAT LTR(" failed\n"), header);
             goto error;
         }
@@ -163,126 +220,123 @@ error:
 }
 
 const uint8_t ELF64_HEADER[] = {
-    0x7f, 'E', 'L', 'F', // Magic
-    0x2, // Class Elf 64
-    0x1, // Data encoding little endian
-    0x1, // Version 1
-    0x0, 0x0, // ABI System V version 0
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Padding
-    0x1, 0x0, // Type relocatable object
-    62, 0x0, // Machine AMD-64
-    0x1, 0x0, 0x0, 0x0, // Object version 1
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Entry point none
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Program header offset
+    0x7f, 'E',  'L',  'F',                   // Magic
+    0x2,                                     // Class Elf 64
+    0x1,                                     // Data encoding little endian
+    0x1,                                     // Version 1
+    0x0,  0x0,                               // ABI System V version 0
+    0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  0x0, // Padding
+    0x1,  0x0,                               // Type relocatable object
+    62,   0x0,                               // Machine AMD-64
+    0x1,  0x0,  0x0,  0x0,                   // Object version 1
+    0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  // Entry point none
+    0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  // Program header offset
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Section header offset
-    0x0, 0x0, 0x0, 0x0, // Flags 0
-    0x40, 0x0, // Elf header size 64
-    0x0, 0x0, 0x0, 0x0, // Size and number of program headers
-    0x40, 0x0, 0x6, 0x0, // Size and number of section headers
-    0x4, 0x0 // Index of .shstrtab
+    0x0,  0x0,  0x0,  0x0,                          // Flags 0
+    0x40, 0x0,                                      // Elf header size 64
+    0x0,  0x0,  0x0,  0x0, // Size and number of program headers
+    0x40, 0x0,  0x6,  0x0, // Size and number of section headers
+    0x4,  0x0              // Index of .shstrtab
 };
 
 const uint8_t ELF32_HEADER[] = {
-    0x7f, 'E', 'L', 'F', // Magic
-    0x1, // Class Elf 32
-    0x1, // Data encoding little endian
-    0x1, // Version 1
-    0x0, 0x0, // ABI System V version 0
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Padding
-    0x1, 0x0, // Type relocatable object
-    3, 0x0, // Machine I80386
-    0x1, 0x0, 0x0, 0x0, // Object version 1
-    0x0, 0x0, 0x0, 0x0, // Entry point none
-    0x0, 0x0, 0x0, 0x0, // Program header offset
-    0xFF, 0xFF, 0xFF, 0xFF, // Section header offset
-    0x0, 0x0, 0x0, 0x0, // Flags 0
-    0x34, 0x0, // Elf header size 52
-    0x0, 0x0, 0x0, 0x0, // Size and number of program headers
-    0x28, 0x0, 0x5, 0x0, // Size and number of section headers
-    0x4, 0x0 // Index of .shstrtab
+    0x7f, 'E',  'L',  'F',                 // Magic
+    0x1,                                   // Class Elf 32
+    0x1,                                   // Data encoding little endian
+    0x1,                                   // Version 1
+    0x0,  0x0,                             // ABI System V version 0
+    0x0,  0x0,  0x0,  0x0,  0x0, 0x0, 0x0, // Padding
+    0x1,  0x0,                             // Type relocatable object
+    3,    0x0,                             // Machine I80386
+    0x1,  0x0,  0x0,  0x0,                 // Object version 1
+    0x0,  0x0,  0x0,  0x0,                 // Entry point none
+    0x0,  0x0,  0x0,  0x0,                 // Program header offset
+    0xFF, 0xFF, 0xFF, 0xFF,                // Section header offset
+    0x0,  0x0,  0x0,  0x0,                 // Flags 0
+    0x34, 0x0,                             // Elf header size 52
+    0x0,  0x0,  0x0,  0x0,                 // Size and number of program headers
+    0x28, 0x0,  0x6,  0x0,                 // Size and number of section headers
+    0x4,  0x0                              // Index of .shstrtab
 };
 //.note.GNU-stack
 const uint8_t ELF_SHSTRTAB[] = {
-    '\0',
-    '.', 'r', 'd', 'a', 't', 'a', '\0',
-    '.', 's', 'y', 'm', 't', 'a', 'b', '\0',
-    '.', 's', 't', 'r', 't', 'a', 'b', '\0',
-    '.', 's', 'h', 's', 't', 'r', 't', 'a', 'b', '\0',
-    '.', 'n', 'o', 't', 'e', '.', 'G', 'N', 'U', '-', 's', 't', 'a', 'c', 'k', '\0'
-};
+    '\0', '.', 'r',  'd', 'a', 't', 'a', '\0', '.', 's', 'y',  'm', 't',
+    'a',  'b', '\0', '.', 's', 't', 'r', 't',  'a', 'b', '\0', '.', 's',
+    'h',  's', 't',  'r', 't', 'a', 'b', '\0', '.', 'n', 'o',  't', 'e',
+    '.',  'G', 'N',  'U', '-', 's', 't', 'a',  'c', 'k', '\0'};
 
 const uint8_t ELF64_SECTION_HEADERS[] = {
-    0x0, 0x0, 0x0, 0x0, // NULL
-    0x0, 0x0, 0x0, 0x0, // NULL
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // NULL 
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // NULL
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // NULL
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // NULL
-    0x0, 0x0, 0x0, 0x0, // NULL
-    0x0, 0x0, 0x0, 0x0, // NULL
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // NULL
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // NULL
-                                            //
-    0x1, 0x0, 0x0, 0x0, // .(r)data name offset
-    0x1, 0x0, 0x0, 0x0, // .(r)data type PROGBITS
-    0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .(r)data flags A
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .(r)data address
-    0x40, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .(r)data file offset
+    0x0, 0x0, 0x0, 0x0,                             // NULL
+    0x0, 0x0, 0x0, 0x0,                             // NULL
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // NULL
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // NULL
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // NULL
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // NULL
+    0x0, 0x0, 0x0, 0x0,                             // NULL
+    0x0, 0x0, 0x0, 0x0,                             // NULL
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // NULL
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // NULL
+                                                    //
+    0x1, 0x0, 0x0, 0x0,                             // .(r)data name offset
+    0x1, 0x0, 0x0, 0x0,                             // .(r)data type PROGBITS
+    0x2, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .(r)data flags A
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .(r)data address
+    0x40, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,        // .(r)data file offset
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // .(r)data size
-    0x0, 0x0, 0x0, 0x0, // .(r)data link 0
-    0x0, 0x0, 0x0, 0x0, // .(r)data info 0
-    0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .(r)data alignment 1
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .(r)data entry size 0
-                                            //
-    0x8, 0x0, 0x0, 0x0, // .symtab name offset
-    0x2, 0x0, 0x0, 0x0, // .symtab type SYMTAB
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .symtab flags 0
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .symtab address 0
+    0x0, 0x0, 0x0, 0x0,                             // .(r)data link 0
+    0x0, 0x0, 0x0, 0x0,                             // .(r)data info 0
+    0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .(r)data alignment 1
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .(r)data entry size 0
+                                                    //
+    0x8, 0x0, 0x0, 0x0,                             // .symtab name offset
+    0x2, 0x0, 0x0, 0x0,                             // .symtab type SYMTAB
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .symtab flags 0
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .symtab address 0
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // .symtab file offset
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // .symtab size
-    0x3, 0x0, 0x0, 0x0, // .symtab link 0
-    0x1, 0x0, 0x0, 0x0, // .symtab info 1 local symbol
-    0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .symtab alignment 8
+    0x3, 0x0, 0x0, 0x0,                             // .symtab link 0
+    0x1, 0x0, 0x0, 0x0,                      // .symtab info 1 local symbol
+    0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,  // .symtab alignment 8
     0x18, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .symtab entry size 0x18
 
-    0x10, 0x0, 0x0, 0x0, // .strtab name offset
-    0x3, 0x0, 0x0, 0x0, // .strtab type STRTAB
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .strtab flags 0
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .strtab address 0
+    0x10, 0x0, 0x0, 0x0,                            // .strtab name offset
+    0x3, 0x0, 0x0, 0x0,                             // .strtab type STRTAB
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .strtab flags 0
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .strtab address 0
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // .strtab file offset
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // .strtab size
-    0x0, 0x0, 0x0, 0x0, // strtab link 0
-    0x0, 0x0, 0x0, 0x0, // strtab info 0
-    0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .strtab alignment 1
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .strtab entry size 0
+    0x0, 0x0, 0x0, 0x0,                             // strtab link 0
+    0x0, 0x0, 0x0, 0x0,                             // strtab info 0
+    0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .strtab alignment 1
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .strtab entry size 0
 
-    0x18, 0x0, 0x0, 0x0, // .shstrtab name offset
-    0x3, 0x0, 0x0, 0x0, // .shstrtab type STRTAB
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .shstrtab flags 0
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .shstrtab address 0
+    0x18, 0x0, 0x0, 0x0,                            // .shstrtab name offset
+    0x3, 0x0, 0x0, 0x0,                             // .shstrtab type STRTAB
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .shstrtab flags 0
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .shstrtab address 0
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // .shstrtab file offset
-    0x32, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .shstrtab size
-    0x0, 0x0, 0x0, 0x0, // shstrtab link 0
-    0x0, 0x0, 0x0, 0x0, // shstrtab info 0
-    0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .shstrtab alignment 1
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .shstrtab entry size 0
+    0x32, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,        // .shstrtab size
+    0x0, 0x0, 0x0, 0x0,                             // shstrtab link 0
+    0x0, 0x0, 0x0, 0x0,                             // shstrtab info 0
+    0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .shstrtab alignment 1
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .shstrtab entry size 0
 
-    0x22, 0x0, 0x0, 0x0, // .note.GNU-stack name offset
-    0x1, 0x0, 0x0, 0x0, // .note.GNU-stack type 1
+    0x22, 0x0, 0x0, 0x0,                    // .note.GNU-stack name offset
+    0x1, 0x0, 0x0, 0x0,                     // .note.GNU-stack type PROGBITS
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .note.GNU-stack flags 0
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .note.GNU-stack address 0
-    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // .note.GNU-stack file offset
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .note.GNU-stack size 0
-    0x0, 0x0, 0x0, 0x0, // .note.GNU-stack link 0
-    0x0, 0x0, 0x0, 0x0, // .note.GNU-stack info 0
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // .note.GNU-stack offset
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .note.GNU-stack size 0
+    0x0, 0x0, 0x0, 0x0,                             // .note.GNU-stack link 0
+    0x0, 0x0, 0x0, 0x0,                             // .note.GNU-stack info 0
     0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // .note.GNU-stack alignment 1
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 // .note.GNU-stack entry size 0
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0  // .note.GNU-stack entry size 0
 };
 
 const uint8_t ELF32_SECTION_HEADERS[] = {
     0x0, 0x0, 0x0, 0x0, // NULL
     0x0, 0x0, 0x0, 0x0, // NULL
-    0x0, 0x0, 0x0, 0x0, // NULL 
+    0x0, 0x0, 0x0, 0x0, // NULL
     0x0, 0x0, 0x0, 0x0, // NULL
     0x0, 0x0, 0x0, 0x0, // NULL
     0x0, 0x0, 0x0, 0x0, // NULL
@@ -291,112 +345,128 @@ const uint8_t ELF32_SECTION_HEADERS[] = {
     0x0, 0x0, 0x0, 0x0, // NULL
     0x0, 0x0, 0x0, 0x0, // NULL
 
-    0x1, 0x0, 0x0, 0x0, // .(r)data name offset
-    0x1, 0x0, 0x0, 0x0, // .(r)data type PROGBITS
-    0x2, 0x0, 0x0, 0x0, // .(r)data flags A
-    0x0, 0x0, 0x0, 0x0, // .(r)data address
-    0x34, 0x0, 0x0, 0x0, // .(r)data file offset
+    0x1, 0x0, 0x0, 0x0,     // .(r)data name offset
+    0x1, 0x0, 0x0, 0x0,     // .(r)data type PROGBITS
+    0x2, 0x0, 0x0, 0x0,     // .(r)data flags A
+    0x0, 0x0, 0x0, 0x0,     // .(r)data address
+    0x34, 0x0, 0x0, 0x0,    // .(r)data file offset
     0xFF, 0xFF, 0xFF, 0xFF, // .(r)data size
-    0x0, 0x0, 0x0, 0x0, // .(r)data link 0
-    0x0, 0x0, 0x0, 0x0, // .(r)data info 0
-    0x1, 0x0, 0x0, 0x0, // .(r)data alignment 1
-    0x0, 0x0, 0x0, 0x0, // .(r)data entry size 0
-                                            //
-    0x8, 0x0, 0x0, 0x0, // .symtab name offset
-    0x2, 0x0, 0x0, 0x0, // .symtab type SYMTAB
-    0x0, 0x0, 0x0, 0x0, // .symtab flags 0
-    0x0, 0x0, 0x0, 0x0, // .symtab address 0
+    0x0, 0x0, 0x0, 0x0,     // .(r)data link 0
+    0x0, 0x0, 0x0, 0x0,     // .(r)data info 0
+    0x1, 0x0, 0x0, 0x0,     // .(r)data alignment 1
+    0x0, 0x0, 0x0, 0x0,     // .(r)data entry size 0
+                            //
+    0x8, 0x0, 0x0, 0x0,     // .symtab name offset
+    0x2, 0x0, 0x0, 0x0,     // .symtab type SYMTAB
+    0x0, 0x0, 0x0, 0x0,     // .symtab flags 0
+    0x0, 0x0, 0x0, 0x0,     // .symtab address 0
     0xFF, 0xFF, 0xFF, 0xFF, // .symtab file offset
     0xFF, 0xFF, 0xFF, 0xFF, // .symtab size
-    0x3, 0x0, 0x0, 0x0, // .symtab link 0
-    0x1, 0x0, 0x0, 0x0, // .symtab info 1 local symbol
-    0x4, 0x0, 0x0, 0x0, // .symtab alignment 4
-    0x10, 0x0, 0x0, 0x0, // .symtab entry size 0x18
+    0x3, 0x0, 0x0, 0x0,     // .symtab link 0
+    0x1, 0x0, 0x0, 0x0,     // .symtab info 1 local symbol
+    0x4, 0x0, 0x0, 0x0,     // .symtab alignment 4
+    0x10, 0x0, 0x0, 0x0,    // .symtab entry size 0x18
 
-    0x10, 0x0, 0x0, 0x0, // .strtab name offset
-    0x3, 0x0, 0x0, 0x0, // .strtab type STRTAB
-    0x0, 0x0, 0x0, 0x0, // .strtab flags 0
-    0x0, 0x0, 0x0, 0x0, // .strtab address 0
+    0x10, 0x0, 0x0, 0x0,    // .strtab name offset
+    0x3, 0x0, 0x0, 0x0,     // .strtab type STRTAB
+    0x0, 0x0, 0x0, 0x0,     // .strtab flags 0
+    0x0, 0x0, 0x0, 0x0,     // .strtab address 0
     0xFF, 0xFF, 0xFF, 0xFF, // .strtab file offset
     0xFF, 0xFF, 0xFF, 0xFF, // .strtab size
-    0x0, 0x0, 0x0, 0x0, // strtab link 0
-    0x0, 0x0, 0x0, 0x0, // strtab info 0
-    0x1, 0x0, 0x0, 0x0, // .strtab alignment 1
-    0x0, 0x0, 0x0, 0x0, // .strtab entry size 0
+    0x0, 0x0, 0x0, 0x0,     // strtab link 0
+    0x0, 0x0, 0x0, 0x0,     // strtab info 0
+    0x1, 0x0, 0x0, 0x0,     // .strtab alignment 1
+    0x0, 0x0, 0x0, 0x0,     // .strtab entry size 0
 
-    0x18, 0x0, 0x0, 0x0, // .shstrtab name offset
-    0x3, 0x0, 0x0, 0x0, // .shstrtab type STRTAB
-    0x0, 0x0, 0x0, 0x0, // .shstrtab flags 0
-    0x0, 0x0, 0x0, 0x0, // .shstrtab address 0
+    0x18, 0x0, 0x0, 0x0,    // .shstrtab name offset
+    0x3, 0x0, 0x0, 0x0,     // .shstrtab type STRTAB
+    0x0, 0x0, 0x0, 0x0,     // .shstrtab flags 0
+    0x0, 0x0, 0x0, 0x0,     // .shstrtab address 0
     0xFF, 0xFF, 0xFF, 0xFF, // .shstrtab file offset
-    0x22, 0x0, 0x0, 0x0, // .shstrtab size
-    0x0, 0x0, 0x0, 0x0, // shstrtab link 0
-    0x0, 0x0, 0x0, 0x0, // shstrtab info 0
-    0x1, 0x0, 0x0, 0x0, // .shstrtab alignment 1
-    0x0, 0x0, 0x0, 0x0, // .shstrtab entry size 0
+    0x32, 0x0, 0x0, 0x0,    // .shstrtab size
+    0x0, 0x0, 0x0, 0x0,     // shstrtab link 0
+    0x0, 0x0, 0x0, 0x0,     // shstrtab info 0
+    0x1, 0x0, 0x0, 0x0,     // .shstrtab alignment 1
+    0x0, 0x0, 0x0, 0x0,     // .shstrtab entry size 0
+
+    0x22, 0x0, 0x0, 0x0,                    // .note.GNU-stack name offset
+    0x1, 0x0, 0x0, 0x0,                     // .note.GNU-stack type PROGBITS
+    0x0, 0x0, 0x0, 0x0, // .note.GNU-stack flags 0
+    0x0, 0x0, 0x0, 0x0, // .note.GNU-stack address 0
+    0xFF, 0xFF, 0xFF, 0xFF, // .note.GNU-stack offset
+    0x0, 0x0, 0x0, 0x0, // .note.GNU-stack size 0
+    0x0, 0x0, 0x0, 0x0,                             // .note.GNU-stack link 0
+    0x0, 0x0, 0x0, 0x0,                             // .note.GNU-stack info 0
+    0x1, 0x0, 0x0, 0x0, // .note.GNU-stack alignment 1
+    0x0, 0x0, 0x0, 0x0, // .note.GNU-stack entry size 0
 };
 
 const uint8_t ELF64_SYMTAB[] = {
     0xFF, 0xFF, 0xFF, 0xFF, // symbol size name
-    0x10, 0x0, // symbol size info GLOBAL NOTYPE, reserved 0
-    0x1, 0x0, // symbol size section index
+    0x10, 0x0,              // symbol size info GLOBAL NOTYPE, reserved 0
+    0x1,  0x0,              // symbol size section index
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // symbol size value
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // symbol size size
-    0xFF, 0xFF, 0xFF, 0xFF, // symbol name
+    0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  // symbol size size
+    0xFF, 0xFF, 0xFF, 0xFF,                         // symbol name
     0x10, 0x0, // symbo info GLOBAL NOTYPE, reserved 0
-    0x1, 0x0, // symbol section index
+    0x1,  0x0, // symbol section index
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // symbol value
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // symbol size
+    0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  0x0,  // symbol size
 };
 
 const uint8_t ELF32_SYMTAB[] = {
     0xFF, 0xFF, 0xFF, 0xFF, // symbol size name
     0xFF, 0xFF, 0xFF, 0xFF, // symbol size value
-    0x0, 0x0, 0x0, 0x0, // symbol size size
-    0x10, 0x0, // symbol size info GLOBAL NOTYPE, reserved 0
-    0x1, 0x0, // symbol size section index
+    0x0,  0x0,  0x0,  0x0,  // symbol size size
+    0x10, 0x0,              // symbol size info GLOBAL NOTYPE, reserved 0
+    0x1,  0x0,              // symbol size section index
     0xFF, 0xFF, 0xFF, 0xFF, // symbol name
     0xFF, 0xFF, 0xFF, 0xFF, // symbol value
-    0x0, 0x0, 0x0, 0x0, // symbol size
-    0x10, 0x0, // symbo info GLOBAL NOTYPE, reserved 0
-    0x1, 0x0 // symbol section index
+    0x0,  0x0,  0x0,  0x0,  // symbol size
+    0x10, 0x0,              // symbo info GLOBAL NOTYPE, reserved 0
+    0x1,  0x0               // symbol section index
 };
 
-void write_elf64_header(uint64_t data_size, uint32_t no_symbols, uint64_t strtab_size, uint8_t machine, uint8_t* out) {
+void write_elf64_header(uint64_t data_size, uint32_t no_symbols,
+                        uint64_t strtab_size, uint8_t machine, uint8_t *out) {
     memcpy(out, ELF64_HEADER, sizeof(ELF64_HEADER));
     data_size += 8 * no_symbols + sizeof(ELF64_HEADER);
     data_size = ALIGN_TO(data_size, 8);
-    data_size += 24 + no_symbols * sizeof(ELF64_SYMTAB) + sizeof(ELF_SHSTRTAB) + strtab_size;
+    data_size += 24 + no_symbols * sizeof(ELF64_SYMTAB) + sizeof(ELF_SHSTRTAB) +
+                 strtab_size;
     data_size = ALIGN_TO(data_size, 8);
     WRITE_U64(out + 40, data_size);
     out[18] = machine;
 }
 
-void write_elf32_header(uint32_t data_size, uint32_t no_symbols, uint32_t strtab_size, uint8_t machine, uint8_t* out) {
+void write_elf32_header(uint32_t data_size, uint32_t no_symbols,
+                        uint32_t strtab_size, uint8_t machine, uint8_t *out) {
     memcpy(out, ELF32_HEADER, sizeof(ELF32_HEADER));
     data_size += 8 * no_symbols + sizeof(ELF32_HEADER);
     data_size = ALIGN_TO(data_size, 4);
-    data_size += 16 + no_symbols * sizeof(ELF32_SYMTAB) + sizeof(ELF_SHSTRTAB) + strtab_size;
+    data_size += 16 + no_symbols * sizeof(ELF32_SYMTAB) + sizeof(ELF_SHSTRTAB) +
+                 strtab_size;
     data_size = ALIGN_TO(data_size, 4);
     WRITE_U32(out + 32, data_size);
     out[18] = machine;
 }
 
-uint8_t* write_elf64_symtab(const char** names, const uint64_t *size, uint32_t no_symbols, uint64_t *data_size) {
+uint8_t *write_elf64_symtab(const char **names, const uint64_t *size,
+                            uint32_t no_symbols, uint64_t *data_size) {
     *data_size = 24 + sizeof(ELF64_SYMTAB) * no_symbols + 1;
     for (uint32_t i = 0; i < no_symbols; ++i) {
         *data_size += 2 * strlen(names[i]) + 7;
     }
-    uint8_t* data = malloc(*data_size);
-    uint8_t* strtab = data + 24 + sizeof(ELF64_SYMTAB) * no_symbols;
+    uint8_t *data = malloc(*data_size);
+    uint8_t *strtab = data + 24 + sizeof(ELF64_SYMTAB) * no_symbols;
     *strtab = 0;
     uint32_t strtab_ix = 1;
     uint64_t data_ix = 0;
     memset(data, 0, 24);
     for (uint32_t i = 0; i < no_symbols; ++i) {
-        uint8_t* base = data + 24 + sizeof(ELF64_SYMTAB) * i;
+        uint8_t *base = data + 24 + sizeof(ELF64_SYMTAB) * i;
         memcpy(base, ELF64_SYMTAB, sizeof(ELF64_SYMTAB));
-        uint32_t name_len = (uint32_t) strlen(names[i]);
+        uint32_t name_len = (uint32_t)strlen(names[i]);
         memcpy(strtab + strtab_ix, names[i], name_len);
         memcpy(strtab + strtab_ix + name_len, "_size", 6);
         memcpy(strtab + strtab_ix + name_len + 6, names[i], name_len + 1);
@@ -410,21 +480,22 @@ uint8_t* write_elf64_symtab(const char** names, const uint64_t *size, uint32_t n
     return data;
 }
 
-uint8_t* write_elf32_symtab(const char** names, const uint64_t *size, uint32_t no_symbols, uint64_t *data_size) {
+uint8_t *write_elf32_symtab(const char **names, const uint64_t *size,
+                            uint32_t no_symbols, uint64_t *data_size) {
     *data_size = 16 + sizeof(ELF32_SYMTAB) * no_symbols + 1;
     for (uint32_t i = 0; i < no_symbols; ++i) {
         *data_size += 2 * strlen(names[i]) + 7;
-    } 
-    uint8_t* data= malloc(*data_size);
-    uint8_t* strtab = data + 16 + sizeof(ELF32_SYMTAB) * no_symbols;
+    }
+    uint8_t *data = malloc(*data_size);
+    uint8_t *strtab = data + 16 + sizeof(ELF32_SYMTAB) * no_symbols;
     *strtab = 0;
     uint32_t strtab_ix = 1;
     uint32_t data_ix = 0;
     memset(data, 0, 16);
     for (uint32_t i = 0; i < no_symbols; ++i) {
-        uint8_t* base = data + 16 + sizeof(ELF32_SYMTAB) * i;
+        uint8_t *base = data + 16 + sizeof(ELF32_SYMTAB) * i;
         memcpy(base, ELF32_SYMTAB, sizeof(ELF32_SYMTAB));
-        uint32_t name_len = (uint32_t) strlen(names[i]);
+        uint32_t name_len = (uint32_t)strlen(names[i]);
         memcpy(strtab + strtab_ix, names[i], name_len);
         memcpy(strtab + strtab_ix + name_len, "_size", 6);
         memcpy(strtab + strtab_ix + name_len + 6, names[i], name_len + 1);
@@ -438,7 +509,9 @@ uint8_t* write_elf32_symtab(const char** names, const uint64_t *size, uint32_t n
     return data;
 }
 
-void write_elf64_section_headers(uint64_t data_size, uint32_t no_symbols, uint64_t strtab_size, bool readonly, uint8_t* out) {
+void write_elf64_section_headers(uint64_t data_size, uint32_t no_symbols,
+                                 uint64_t strtab_size, bool readonly,
+                                 uint8_t *out) {
     memcpy(out, ELF64_SECTION_HEADERS, sizeof(ELF64_SECTION_HEADERS));
     if (!readonly) {
         out[72] |= 1;
@@ -448,7 +521,8 @@ void write_elf64_section_headers(uint64_t data_size, uint32_t no_symbols, uint64
     data_size = ALIGN_TO(data_size, 8);
     data_size += 0x40;
     WRITE_U64(out + 2 * 64 + 24, data_size);
-    WRITE_U64(out + 2 * 64 + 32, (uint64_t)(24 + sizeof(ELF64_SYMTAB) * no_symbols));
+    WRITE_U64(out + 2 * 64 + 32,
+              (uint64_t)(24 + sizeof(ELF64_SYMTAB) * no_symbols));
     data_size += 24 + sizeof(ELF64_SYMTAB) * no_symbols;
     WRITE_U64(out + 3 * 64 + 24, data_size);
     WRITE_U64(out + 3 * 64 + 32, strtab_size);
@@ -458,7 +532,9 @@ void write_elf64_section_headers(uint64_t data_size, uint32_t no_symbols, uint64
     WRITE_U64(out + 5 * 64 + 24, data_size);
 }
 
-void write_elf32_section_headers(uint32_t data_size, uint32_t no_symbols, uint32_t strtab_size, bool readonly, uint8_t* out) {
+void write_elf32_section_headers(uint32_t data_size, uint32_t no_symbols,
+                                 uint32_t strtab_size, bool readonly,
+                                 uint8_t *out) {
     memcpy(out, ELF32_SECTION_HEADERS, sizeof(ELF32_SECTION_HEADERS));
     if (!readonly) {
         out[48] |= 1;
@@ -474,11 +550,13 @@ void write_elf32_section_headers(uint32_t data_size, uint32_t no_symbols, uint32
     WRITE_U32(out + 3 * 40 + 20, strtab_size);
     data_size += strtab_size;
     WRITE_U32(out + 4 * 40 + 16, data_size);
+    data_size += sizeof(ELF_SHSTRTAB);
+    WRITE_U32(out + 5 * 40 + 16, data_size);
 }
 
-
-bool write_elf(const char** names, const Filename_t* files, const uint64_t* size,
-        const uint32_t no_symbols, const Filename_t outname, bool readonly, enum Format format) {
+bool write_elf(const char **names, const Filename_t *files,
+               const uint64_t *size, const uint32_t no_symbols,
+               const Filename_t outname, bool readonly, enum Format format) {
     FILE *out = OPEN(outname, "wb");
     bool elf32 = format == ELF32 || format == ELF32_ARM;
     if (out == NULL) {
@@ -492,7 +570,8 @@ bool write_elf(const char** names, const Filename_t* files, const uint64_t* size
         data_size += size[i];
         strtab_size += 2 * strlen(names[i]) + 7;
         if (strtab_size > UINT32_MAX) {
-            PERROR("" STR_FORMAT, "Total length of all symbol names to large\n");
+            PERROR("" STR_FORMAT,
+                   "Total length of all symbol names to large\n");
             goto error;
         }
         if (elf32 && data_size > UINT32_MAX) {
@@ -517,7 +596,8 @@ bool write_elf(const char** names, const Filename_t* files, const uint64_t* size
         goto error;
     }
 
-    if (!write_all_files(out, files, size, no_symbols, outname, hsize, elf32 ? 4 : 8)) {
+    if (!write_all_files(out, files, size, no_symbols, outname, hsize,
+                         elf32 ? 4 : 8)) {
         goto error;
     }
     uint64_t symtab_size;
@@ -532,7 +612,8 @@ bool write_elf(const char** names, const Filename_t* files, const uint64_t* size
     if (!readonly) {
         memcpy(shstrtab + 1, ".data", 6);
     }
-    if (!write_all(out, symtab_size, symtab) || !write_all(out, sizeof(ELF_SHSTRTAB), shstrtab)) {
+    if (!write_all(out, symtab_size, symtab) ||
+        !write_all(out, sizeof(ELF_SHSTRTAB), shstrtab)) {
         free(symtab);
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
@@ -542,7 +623,8 @@ bool write_elf(const char** names, const Filename_t* files, const uint64_t* size
     uint32_t align = elf32 ? 4 : 8;
     if (ALIGN_DIFF(fsize, align) != 0) {
         uint8_t padding[] = {0, 0, 0, 0, 0, 0, 0, 0};
-        if (fwrite(padding, 1, ALIGN_DIFF(fsize, align), out) != ALIGN_DIFF(fsize, align)) {
+        if (fwrite(padding, 1, ALIGN_DIFF(fsize, align), out) !=
+            ALIGN_DIFF(fsize, align)) {
             PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
             goto error;
         }
@@ -551,10 +633,12 @@ bool write_elf(const char** names, const Filename_t* files, const uint64_t* size
     uint32_t sh_size;
     if (elf32) {
         sh_size = sizeof(ELF32_SECTION_HEADERS);
-        write_elf32_section_headers(data_size, no_symbols, strtab_size, readonly, section_headers);
+        write_elf32_section_headers(data_size, no_symbols, strtab_size,
+                                    readonly, section_headers);
     } else {
         sh_size = sizeof(ELF64_SECTION_HEADERS);
-        write_elf64_section_headers(data_size, no_symbols, strtab_size, readonly, section_headers);
+        write_elf64_section_headers(data_size, no_symbols, strtab_size,
+                                    readonly, section_headers);
     }
     if (!write_all(out, sh_size, section_headers)) {
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
@@ -570,39 +654,39 @@ error:
 }
 
 const uint8_t COFF_HEADER[] = {
-    0x64, 0x86, // Machine x64
-    0x1, 0x0, // NumberOfSections 1
-    0x0, 0x0, 0x0, 0x0, // Timestamp 0
+    0x64, 0x86,             // Machine x64
+    0x1,  0x0,              // NumberOfSections 1
+    0x0,  0x0,  0x0,  0x0,  // Timestamp 0
     0xFF, 0xFF, 0xFF, 0xFF, // Coff table file offset
     0xFF, 0xFF, 0xFF, 0xFF, // Number of symbols
-    0x0, 0x0, // Size of optional header 0
-    0x0, 0x0 // Characteristics 0
+    0x0,  0x0,              // Size of optional header 0
+    0x0,  0x0               // Characteristics 0
 };
 
 const uint8_t COFF_SECTION_HEADER[] = {
-    '.', 'r', 'd', 'a', 't', 'a', 0x0, 0x0, // Name
-    0x0, 0x0, 0x0, 0x0, // VirtualSize
-    0x0, 0x0, 0x0, 0x0, // VirtualAdress
-    0xFF, 0xFF, 0xFF, 0xFF, // SizeOfRawData
-    0x3c, 0x0, 0x0, 0x0, // PointerToRawData
-    0x0, 0x0, 0x0, 0x0, // PointerToRelocations
-    0x0, 0x0, 0x0, 0x0, // PointerToLinenumbers
-    0x0, 0x0, // NumberOfRelocations
-    0x0, 0x0, // NumberOfLinenumbers
-    0x40, 0x0, 0x10, 0x40 // Characteristics Initialized, 1-byte aligned, read
+    '.',  'r',  'd',  'a',  't', 'a', 0x0, 0x0, // Name
+    0x0,  0x0,  0x0,  0x0,                      // VirtualSize
+    0x0,  0x0,  0x0,  0x0,                      // VirtualAdress
+    0xFF, 0xFF, 0xFF, 0xFF,                     // SizeOfRawData
+    0x3c, 0x0,  0x0,  0x0,                      // PointerToRawData
+    0x0,  0x0,  0x0,  0x0,                      // PointerToRelocations
+    0x0,  0x0,  0x0,  0x0,                      // PointerToLinenumbers
+    0x0,  0x0,                                  // NumberOfRelocations
+    0x0,  0x0,                                  // NumberOfLinenumbers
+    0x40, 0x0,  0x10, 0x40 // Characteristics Initialized, 1-byte aligned, read
 };
 
 const uint8_t COFF_SYMBOL_ENTRY[] = {
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // name
-    0x0, 0x0, 0x0, 0x0, // offset
-    0x1, 0x0, // section number
-    0x0, 0x0, // type
-    0x2, // storage class
-    0x0 // Aux symbols
+    0x0, 0x0, 0x0, 0x0,                     // offset
+    0x1, 0x0,                               // section number
+    0x0, 0x0,                               // type
+    0x2,                                    // storage class
+    0x0                                     // Aux symbols
 };
 
-
-void write_coff_header(uint32_t data_size, uint8_t* data, uint32_t no_symbols, enum Format format) {
+void write_coff_header(uint32_t data_size, uint8_t *data, uint32_t no_symbols,
+                       enum Format format) {
     memcpy(data, COFF_HEADER, sizeof(COFF_HEADER));
     data_size = data_size + 8 * no_symbols;
     if ((20 + 40 + data_size) % 8 != 0) {
@@ -623,7 +707,8 @@ void write_coff_header(uint32_t data_size, uint8_t* data, uint32_t no_symbols, e
     }
 }
 
-void write_coff_section_header(uint32_t data_size, uint32_t no_symbols, bool readonly, uint8_t* data) {
+void write_coff_section_header(uint32_t data_size, uint32_t no_symbols,
+                               bool readonly, uint8_t *data) {
     memcpy(data, COFF_SECTION_HEADER, sizeof(COFF_SECTION_HEADER));
     if (!readonly) {
         memcpy(data, ".data", 6);
@@ -636,7 +721,9 @@ void write_coff_section_header(uint32_t data_size, uint32_t no_symbols, bool rea
     data[19] = (data_size >> 24) & 0xff;
 }
 
-uint8_t* write_coff_symbol_table(const char** names, const uint64_t *size, uint32_t no_symbols, bool coff32, uint32_t *data_size) {
+uint8_t *write_coff_symbol_table(const char **names, const uint64_t *size,
+                                 uint32_t no_symbols, bool coff32,
+                                 uint32_t *data_size) {
     *data_size = 2 * sizeof(COFF_SYMBOL_ENTRY) * no_symbols + 4;
     for (uint32_t i = 0; i < no_symbols; ++i) {
         uint32_t name_len = (uint32_t)strlen(names[i]);
@@ -662,8 +749,10 @@ uint8_t* write_coff_symbol_table(const char** names, const uint64_t *size, uint3
             ++name_len;
         }
         uint32_t data_offset = 2 * sizeof(COFF_SYMBOL_ENTRY) * i;
-        memcpy(data + data_offset, COFF_SYMBOL_ENTRY, sizeof(COFF_SYMBOL_ENTRY));
-        memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY), COFF_SYMBOL_ENTRY, sizeof(COFF_SYMBOL_ENTRY));
+        memcpy(data + data_offset, COFF_SYMBOL_ENTRY,
+               sizeof(COFF_SYMBOL_ENTRY));
+        memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY),
+               COFF_SYMBOL_ENTRY, sizeof(COFF_SYMBOL_ENTRY));
         if (name_len > 3) {
             if (coff32) {
                 *(strtable + strtable_offset) = '_';
@@ -691,26 +780,31 @@ uint8_t* write_coff_symbol_table(const char** names, const uint64_t *size, uint3
             } else {
                 memcpy(strtable + strtable_offset, names[i], name_len + 1);
             }
-            WRITE_U32(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 4, strtable_offset);
+            WRITE_U32(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 4,
+                      strtable_offset);
             strtable_offset += name_len + 1;
         } else {
             if (coff32) {
                 *(data + data_offset + sizeof(COFF_SYMBOL_ENTRY)) = '_';
-                memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 1, names[i], name_len - 1);
+                memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 1,
+                       names[i], name_len - 1);
             } else {
-                memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY), names[i], name_len);
+                memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY), names[i],
+                       name_len);
             }
         }
-        WRITE_U32(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 8, offset + 8);
+        WRITE_U32(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 8,
+                  offset + 8);
         offset += (uint32_t)size[i] + 8;
     }
     WRITE_U32(strtable, strtable_offset);
     return data;
 }
 
-bool write_coff(const char** names, const Filename_t* files, const uint64_t* size,
-        const uint32_t no_symbols, const Filename_t outname, bool readonly, enum Format format) {
-    FILE* out = OPEN(outname, "wb");
+bool write_coff(const char **names, const Filename_t *files,
+                const uint64_t *size, const uint32_t no_symbols,
+                const Filename_t outname, bool readonly, enum Format format) {
+    FILE *out = OPEN(outname, "wb");
     if (out == NULL) {
         PERROR("Could not create file " F_FORMAT LTR("\n"), outname);
         return false;
@@ -722,22 +816,27 @@ bool write_coff(const char** names, const Filename_t* files, const uint64_t* siz
     for (uint64_t i = 0; i < no_symbols; ++i) {
         full_size += size[i];
         if (full_size > INT32_MAX) {
-            PERROR("" STR_FORMAT, "COFF-objects only support up to 2 GB of data\n");
+            PERROR("" STR_FORMAT,
+                   "COFF-objects only support up to 2 GB of data\n");
             return false;
         }
     }
     write_coff_header(full_size, header, no_symbols, format);
-    write_coff_section_header(full_size, no_symbols, readonly, header + sizeof(COFF_HEADER));
+    write_coff_section_header(full_size, no_symbols, readonly,
+                              header + sizeof(COFF_HEADER));
     if (fwrite(header, 1, sizeof(header), out) != sizeof(header)) {
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
-    if (!write_all_files(out, files, size, no_symbols, outname, sizeof(COFF_HEADER) + sizeof(COFF_SECTION_HEADER), 8)) {
+    if (!write_all_files(out, files, size, no_symbols, outname,
+                         sizeof(COFF_HEADER) + sizeof(COFF_SECTION_HEADER),
+                         8)) {
         goto error;
     }
 
     uint32_t symbol_table_size;
-    uint8_t *symbol_table_buf = write_coff_symbol_table(names, size, no_symbols, coff32, &symbol_table_size);
+    uint8_t *symbol_table_buf = write_coff_symbol_table(
+        names, size, no_symbols, coff32, &symbol_table_size);
     if (!write_all(out, symbol_table_size, symbol_table_buf)) {
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
@@ -752,9 +851,9 @@ error:
     return false;
 }
 
-char* to_ascii(const CHAR* ptr) {
+char *to_ascii(const CHAR *ptr) {
     size_t len = STRLEN(ptr);
-    char* res = malloc(len + 1);
+    char *res = malloc(len + 1);
     for (size_t i = 0; i < len; ++i) {
         if (ptr[i] > 127) {
             free(res);
@@ -766,13 +865,14 @@ char* to_ascii(const CHAR* ptr) {
     return res;
 }
 
-char* to_symbol(const CHAR* ptr, bool replace_dot, bool format) {
+char *to_symbol(const CHAR *ptr, bool replace_dot, bool format) {
     size_t len = STRLEN(ptr);
-    char* res = malloc(len + 1);
+    char *res = malloc(len + 1);
     for (size_t ix = 0; ix < len; ++ix) {
         if (ptr[ix] == LTR('.') && replace_dot) {
             res[ix] = '_';
-        } else if ((ptr[ix] == LTR('.') && replace_dot) || ptr[ix] == LTR('_')) {
+        } else if ((ptr[ix] == LTR('.') && replace_dot) ||
+                   ptr[ix] == LTR('_')) {
             res[ix] = '_';
         } else if (ptr[ix] >= LTR('a') && ptr[ix] <= LTR('z')) {
             res[ix] = (char)('a' + (ptr[ix] - LTR('a')));
@@ -780,9 +880,10 @@ char* to_symbol(const CHAR* ptr, bool replace_dot, bool format) {
             res[ix] = (char)('A' + (ptr[ix] - LTR('A')));
         } else if (ptr[ix] >= LTR('0') && ptr[ix] <= LTR('9')) {
             res[ix] = (char)('0' + (ptr[ix] - LTR('0')));
-        } else if (format && ptr[ix] == LTR('%')) { 
-            if (ptr[ix + 1] != LTR('f') && ptr[ix + 1] != LTR('d') && 
-                    ptr[ix + 1] != LTR('n') && ptr[ix + 1] != LTR('e') && ptr[ix + 1] != LTR('x')) {
+        } else if (format && ptr[ix] == LTR('%')) {
+            if (ptr[ix + 1] != LTR('f') && ptr[ix + 1] != LTR('d') &&
+                ptr[ix + 1] != LTR('n') && ptr[ix + 1] != LTR('e') &&
+                ptr[ix + 1] != LTR('x')) {
                 return NULL;
             }
             res[ix] = '%';
@@ -795,17 +896,17 @@ char* to_symbol(const CHAR* ptr, bool replace_dot, bool format) {
     return res;
 }
 
-char* get_symbol(const char* format, const Filename_t filename, uint32_t n) {
+char *get_symbol(const char *format, const Filename_t filename, uint32_t n) {
     Filename_t f = realpath(filename, NULL);
     Filename_t file = f;
-    char* dirs[10];
-    char* ext = NULL;
-    char* base = NULL;
+    char *dirs[10];
+    char *ext = NULL;
+    char *base = NULL;
     uint32_t dir_count = 0;
     while (file != NULL) {
-        CHAR* c = STRCHR(file, '/');
+        CHAR *c = STRCHR(file, '/');
 #ifdef _WIN32
-        CHAR* c2 = STRCHR(file, '\\');
+        CHAR *c2 = STRCHR(file, '\\');
         c = (c2 < c || c == NULL) ? c2 : c;
 #endif
         if (c == NULL) {
@@ -814,7 +915,7 @@ char* get_symbol(const char* format, const Filename_t filename, uint32_t n) {
         CHAR old = *c;
         if (dir_count == 10) {
             free(dirs[9]);
-            memmove(dirs + 1, dirs, 9 * sizeof(char*));
+            memmove(dirs + 1, dirs, 9 * sizeof(char *));
         } else {
             ++dir_count;
         }
@@ -823,7 +924,7 @@ char* get_symbol(const char* format, const Filename_t filename, uint32_t n) {
         file = c + 1;
         *c = old;
     }
-    memmove(dirs, dirs + 10 - dir_count, dir_count * sizeof(char*));
+    memmove(dirs, dirs + 10 - dir_count, dir_count * sizeof(char *));
     for (int i = dir_count; i < 10; ++i) {
         dirs[i] = NULL;
     }
@@ -844,8 +945,8 @@ char* get_symbol(const char* format, const Filename_t filename, uint32_t n) {
             }
         }
     }
-    char* res = NULL;
-    char* dest = malloc(10);
+    char *res = NULL;
+    char *dest = malloc(10);
     uint32_t cap = 10;
     size_t ix = 0;
     for (size_t i = 0; format[i] != 0; ++i) {
@@ -858,7 +959,7 @@ char* get_symbol(const char* format, const Filename_t filename, uint32_t n) {
         } else {
             ++i;
             size_t len;
-            char* b = "";
+            char *b = "";
             if (format[i] == 'n') {
                 char buf[32];
                 b = buf;
@@ -922,78 +1023,76 @@ cleanup:
     return res;
 }
 
+#define FLAG_COUNT 5
+const CHAR FLAGS[] = {
+    LTR('o'), LTR('s'), LTR('f'), LTR('w'), LTR('h')
+};
 
-int ENTRY(int argc, CHAR** argv) {
+const CHAR* LONG_FLAGS[] = {
+    LTR("output"), LTR("symbol-format"), LTR("object-format"), LTR("writable"), LTR("help")
+};
+
+CHAR check_flag(CHAR* arg, int* i, uint32_t* offset) {
+    *offset = 0;
+    if (arg[1] == '-') {
+        for (int j = 0; j < FLAG_COUNT; ++j) {
+            if (STRCMP(arg + 2, LONG_FLAGS[j]) == 0) {
+                if (FLAGS[j] != LTR('w') && FLAGS[j] != LTR('h')) {
+                    *i += 1;
+                }
+                return FLAGS[j];
+            }
+        }
+        return LTR('\0');
+    }
+    for (int j = 0; j < FLAG_COUNT; ++j) {
+        if (arg[1] == FLAGS[j]) {
+            if (arg[2] != LTR('\0')) {
+                *offset = 2;
+            } else if (FLAGS[j] != LTR('w') && FLAGS[j] != LTR('h'))  {
+                *i += 1;
+            }
+            return FLAGS[j];
+        }
+    }
+    return LTR('\0');
+}
+
+int ENTRY(int argc, CHAR **argv) {
 #ifdef _WIN32
     _setmode(_fileno(stdout), _O_U16TEXT);
     _setmode(_fileno(stderr), _O_U16TEXT);
 #endif
     int status = 1;
     if (argc < 2) {
-#ifdef _WIN32
-#ifdef _WIN64
-#ifdef __clang__
-        PERROR("" STR_FORMAT, "x64-windows Clang build\n");
-#elif defined _MSC_VER
-        PERROR("" STR_FORMAT, "x64-windows MSVC build\n");
-#else
-        PERROR("" STR_FORMAT, "x64-windows MinGW build\n");
-#endif
-#else
-#ifdef __clang__
-        PERROR("" STR_FORMAT, "x86-windows Clang build\n");
-#elif defined _MSC_VER
-        PERROR("" STR_FORMAT, "x86-windows MSVC build\n");
-#else
-        PERROR("" STR_FORMAT, "x86-windows MinGW build\n");
-#endif
-#endif
-#else
-#ifdef __x86_64__
-#ifdef __clang__
-        PERROR("" STR_FORMAT, "x64 Clang build\n");
-#else
-        PERROR("" STR_FORMAT, "x64 GCC build\n");
-#endif
-#elif defined __arm__
-        PERROR("" STR_FORMAT, "arm GCC build\n");
-#else
-#ifdef __clang__
-        PERROR("" STR_FORMAT, "x86 Clang build\n");
-#else
-        PERROR("" STR_FORMAT, "x86 GCC build\n");
-#endif
-#endif
-#endif
+        PERROR("" STR_FORMAT LTR("\n"), HOST_NAME);
         return 1;
     }
 
     Filename_t outname = NULL;
     Filename_t header = NULL;
-    Filename_t* input_names = malloc(argc * sizeof(Filename_t));
-    char** symbol_names = malloc(argc * sizeof(char*));
+    Filename_t *input_names = malloc(argc * sizeof(Filename_t));
+    char **symbol_names = malloc(argc * sizeof(char *));
     uint64_t *input_sizes = malloc(argc * sizeof(uint64_t));
-    char* format = NULL;
+    char *format = NULL;
     enum Format out_format = NONE_FORMAT;
     bool readonly = true;
 
     uint32_t input_count = 0;
     for (int i = 1; i < argc; ++i) {
         if (argv[i][0] == LTR('-')) {
-            uint32_t ix = 2;
-            CHAR val = argv[i][1];
-            if (val != LTR('o') && val != LTR('s') && val != LTR('f') && val != LTR('w') && val != LTR('h')) {
-                PERROR("Unkown flag " F_FORMAT LTR("\n"), argv[i]);
+            uint32_t ix = 0;
+            CHAR val = check_flag(argv[i], &i, &ix);
+            if (val == LTR('\0')) {
+                PERROR("Unkown flag '" F_FORMAT LTR("'\n"), argv[i]);
                 goto cleanup;
             }
-            if (val != LTR('w') && val != LTR('\0') && argv[i][2] == LTR('\0')) {
-                ++i;
-                ix = 0;
-                if (i == argc) {
-                    PERROR("No value specified for " F_FORMAT LTR("\n"), argv[i - 1]);
-                    goto cleanup;
-                }
+            if (i == argc) {
+                PERROR("No value specified for '" F_FORMAT LTR("'\n"),
+                        argv[i - 1]);
+                goto cleanup;
             }
+
             if (val == LTR('o')) {
                 if (outname != NULL) {
                     PERROR("" STR_FORMAT, "Extra output files specified\n");
@@ -1004,20 +1103,23 @@ int ENTRY(int argc, CHAR** argv) {
                 memcpy(outname, argv[i] + ix, len * sizeof(CHAR));
             } else if (val == LTR('s')) {
                 if (format != NULL) {
-                    PERROR("" STR_FORMAT, "Multiple symbol formats specified\n");
+                    PERROR("" STR_FORMAT,
+                           "Multiple symbol formats specified\n");
                     goto cleanup;
                 }
                 format = to_symbol(argv[i] + ix, false, true);
                 if (format == NULL) {
-                    PERROR("Invalid symbol format " F_FORMAT LTR("\n"), argv[i] + ix);
+                    PERROR("Invalid symbol format " F_FORMAT LTR("\n"),
+                           argv[i] + ix);
                     goto cleanup;
                 }
             } else if (val == LTR('f')) {
                 if (out_format != NONE_FORMAT) {
-                    PERROR("" STR_FORMAT, "Multiple object formats specified\n");
+                    PERROR("" STR_FORMAT,
+                           "Multiple object formats specified\n");
                     goto cleanup;
                 }
-                char* format = to_ascii(argv[i] + ix);
+                char *format = to_ascii(argv[i] + ix);
                 if (format != NULL) {
                     for (int i = 0; i < NONE_FORMAT; ++i) {
                         if (strcmp(format, format_names[i]) == 0) {
@@ -1028,7 +1130,8 @@ int ENTRY(int argc, CHAR** argv) {
                     free(format);
                 }
                 if (out_format == NONE_FORMAT) {
-                    PERROR("Unsupported object format " F_FORMAT LTR("\n"), argv[i] + ix);
+                    PERROR("Unsupported object format " F_FORMAT LTR("\n"),
+                           argv[i] + ix);
                     goto cleanup;
                 }
             } else if (val == LTR('w')) {
@@ -1048,20 +1151,23 @@ int ENTRY(int argc, CHAR** argv) {
                 memcpy(input_names[input_count], argv[i], len * sizeof(CHAR));
                 input_names[input_count][len] = LTR('\0');
                 *sep = LTR('\0');
-                CHAR* symbol_name_root = sep + 1;
+                CHAR *symbol_name_root = sep + 1;
                 if (*symbol_name_root == LTR('\0')) {
                     PERROR("Invalid argument " F_FORMAT LTR("\n"), argv[i]);
                     goto cleanup;
                 }
-                symbol_names[input_count] = to_symbol(symbol_name_root, false, false);
+                symbol_names[input_count] =
+                    to_symbol(symbol_name_root, false, false);
                 if (symbol_names[input_count] == NULL) {
-                    PERROR("Invalid symbol name " F_FORMAT LTR("\n"), symbol_name_root);
+                    PERROR("Invalid symbol name " F_FORMAT LTR("\n"),
+                           symbol_name_root);
                     goto cleanup;
                 }
             } else {
                 uint32_t len = (uint32_t)STRLEN(argv[i]);
                 input_names[input_count] = malloc((len + 1) * sizeof(CHAR));
-                memcpy(input_names[input_count], argv[i], (len + 1) * sizeof(CHAR));
+                memcpy(input_names[input_count], argv[i],
+                       (len + 1) * sizeof(CHAR));
                 symbol_names[input_count] = NULL;
             }
             ++input_count;
@@ -1072,21 +1178,7 @@ int ENTRY(int argc, CHAR** argv) {
         goto cleanup;
     }
     if (out_format == NONE_FORMAT) {
-#ifdef _WIN32
-    #ifdef _WIN64
-        out_format = COFF64;
-    #else
-        out_format = COFF32;
-    #endif
-#else
-    #ifdef __x86_64__
-        out_format = ELF64;
-    #elif defined __arm__
-        out_format = ELF32_ARM;
-    #else
-        out_format = ELF32;
-    #endif
-#endif
+        out_format = DEFAULT_FORMAT;
     }
     if (outname == NULL) {
         outname = malloc(10 * sizeof(CHAR));
@@ -1105,27 +1197,30 @@ int ENTRY(int argc, CHAR** argv) {
         FILE *f = OPEN(input_names[i], "rb");
         long size;
         if (f == NULL || fseek(f, 0, SEEK_END) != 0) {
-            PERROR("Failed to open input file " F_FORMAT LTR("\n"), input_names[i]);
+            PERROR("Failed to open input file " F_FORMAT LTR("\n"),
+                   input_names[i]);
             if (f != NULL) {
                 fclose(f);
             }
             goto cleanup;
         }
         if ((size = ftell(f)) < 0) {
-            // This is likely the case on windows. COFF is limited to 4GB anyways...
+            // This is likely the case on windows. COFF is limited to 4GB
+            // anyways...
             PERROR("File " F_FORMAT LTR(" to large\n"), input_names[i]);
             fclose(f);
             goto cleanup;
         }
         input_sizes[i] = size;
         fclose(f);
-    }  
+    }
 
     for (uint32_t i = 0; i < input_count; ++i) {
         if (symbol_names[i] == NULL) {
             symbol_names[i] = get_symbol(format, input_names[i], i);
             if (symbol_names[i] == NULL) {
-                PERROR("Format gives invalid symbol for " F_FORMAT LTR("\n"), input_names[i]);
+                PERROR("Format gives invalid symbol for " F_FORMAT LTR("\n"),
+                       input_names[i]);
                 goto cleanup;
             }
         }
@@ -1134,24 +1229,31 @@ int ENTRY(int argc, CHAR** argv) {
     for (uint32_t i = 0; i < input_count; ++i) {
         for (uint32_t j = i + 1; j < input_count; ++j) {
             if (strcmp(symbol_names[i], symbol_names[j]) == 0) {
-                PERROR("Duplicate symbol name " STR_FORMAT LTR("\n"), symbol_names[i]);
+                PERROR("Duplicate symbol name " STR_FORMAT LTR("\n"),
+                       symbol_names[i]);
                 goto cleanup;
             }
         }
     }
 
-    for (uint32_t i = 0; i < input_count; ++i) {
-        PERROR("File: " F_FORMAT LTR(", symbol: ") STR_FORMAT LTR(", size: %llu\n"), input_names[i], symbol_names[i], 
-                (unsigned long long)input_sizes[i]);
-    }
+    /*for (uint32_t i = 0; i < input_count; ++i) {
+        PERROR("File: " F_FORMAT LTR(", symbol: ")
+                   STR_FORMAT LTR(", size: %llu\n"),
+               input_names[i], symbol_names[i],
+               (unsigned long long)input_sizes[i]);
+    }*/
 
-    if (out_format == COFF64 || out_format  == COFF32 || out_format == COFF64_ARM || out_format == COFF32_ARM) {
-        write_coff((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly, out_format);
+    if (out_format == COFF64 || out_format == COFF32 ||
+        out_format == COFF64_ARM || out_format == COFF32_ARM) {
+        write_coff((const char **)symbol_names, input_names, input_sizes,
+                   input_count, outname, readonly, out_format);
     } else {
-        write_elf((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly, out_format);
+        write_elf((const char **)symbol_names, input_names, input_sizes,
+                  input_count, outname, readonly, out_format);
     }
     if (header != NULL) {
-        write_c_header((const char**)symbol_names, input_sizes, input_count, header, readonly);
+        write_c_header((const char **)symbol_names, input_sizes, input_count,
+                       header, readonly);
     }
 
     status = 0;
