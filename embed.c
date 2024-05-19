@@ -47,7 +47,11 @@ typedef char* Filename_t;
 #endif
 
 enum Format {
-    COFF64, COFF32, ELF64, ELF32, ELF32_ARM, NONE
+    COFF64, COFF32, COFF64_ARM, COFF32_ARM, ELF64, ELF32, ELF64_ARM, ELF32_ARM, NONE_FORMAT
+};
+
+const char* format_names[] = {
+    "coff64", "coff32", "coff64-arm", "coff32-arm", "elf64", "elf32", "elf32-arm"
 };
 
 #define WRITE_U32(ptr, val) do { \
@@ -346,13 +350,14 @@ const uint8_t ELF32_SYMTAB[] = {
     0x1, 0x0 // symbol section index
 };
 
-void write_elf64_header(uint64_t data_size, uint32_t no_symbols, uint64_t strtab_size, uint8_t* out) {
+void write_elf64_header(uint64_t data_size, uint32_t no_symbols, uint64_t strtab_size, uint8_t machine, uint8_t* out) {
     memcpy(out, ELF64_HEADER, sizeof(ELF64_HEADER));
     data_size += 8 * no_symbols + sizeof(ELF64_HEADER);
     data_size = ALIGN_TO(data_size, 8);
     data_size += 24 + no_symbols * sizeof(ELF64_SYMTAB) + sizeof(ELF_SHSTRTAB) + strtab_size;
     data_size = ALIGN_TO(data_size, 8);
     WRITE_U64(out + 40, data_size);
+    out[18] = machine;
 }
 
 void write_elf32_header(uint32_t data_size, uint32_t no_symbols, uint32_t strtab_size, uint8_t machine, uint8_t* out) {
@@ -490,7 +495,8 @@ bool write_elf(const char** names, const Filename_t* files, const uint64_t* size
         write_elf32_header(data_size, no_symbols, strtab_size, machine, header);
     } else {
         hsize = sizeof(ELF64_HEADER);
-        write_elf64_header(data_size, no_symbols, strtab_size, header);
+        uint8_t machine = format == ELF64 ? 62 : 183;
+        write_elf64_header(data_size, no_symbols, strtab_size, machine, header);
     }
     if (!write_all(out, hsize, header)) {
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
@@ -582,19 +588,25 @@ const uint8_t COFF_SYMBOL_ENTRY[] = {
 };
 
 
-void write_coff_header(uint32_t data_size, uint8_t* data, uint32_t no_symbols, bool coff32) {
-   memcpy(data, COFF_HEADER, sizeof(COFF_HEADER));
-   data_size = data_size + 8 * no_symbols;
-   if ((20 + 40 + data_size) % 8 != 0) {
-       data_size += 8 - ((20 + 40 + data_size) % 8);
-   }
-   uint32_t coff_offset = 20 + 40 + data_size;
-   WRITE_U32(data + 8, coff_offset);
-   WRITE_U32(data + 12, no_symbols * 2);
-   if (coff32) {
-       data[0] = 0x4C;
-       data[1] = 0x01;
-   }
+void write_coff_header(uint32_t data_size, uint8_t* data, uint32_t no_symbols, enum Format format) {
+    memcpy(data, COFF_HEADER, sizeof(COFF_HEADER));
+    data_size = data_size + 8 * no_symbols;
+    if ((20 + 40 + data_size) % 8 != 0) {
+        data_size += 8 - ((20 + 40 + data_size) % 8);
+    }
+    uint32_t coff_offset = 20 + 40 + data_size;
+    WRITE_U32(data + 8, coff_offset);
+    WRITE_U32(data + 12, no_symbols * 2);
+    if (format == COFF32) {
+        data[0] = 0x4C;
+        data[1] = 0x01;
+    } else if (format == COFF32_ARM) {
+        data[0] = 0xC0;
+        data[1] = 0x01;
+    } else if (format == COFF64_ARM) {
+        data[0] = 0x64;
+        data[1] = 0xaa;
+    }
 }
 
 void write_coff_section_header(uint32_t data_size, uint32_t no_symbols, bool readonly, uint8_t* data) {
@@ -683,12 +695,13 @@ uint8_t* write_coff_symbol_table(const char** names, const uint64_t *size, uint3
 }
 
 bool write_coff(const char** names, const Filename_t* files, const uint64_t* size,
-        const uint32_t no_symbols, const Filename_t outname, bool readonly, bool coff32) {
+        const uint32_t no_symbols, const Filename_t outname, bool readonly, enum Format format) {
     FILE* out = OPEN(outname, "wb");
     if (out == NULL) {
         PERROR("Could not create file " F_FORMAT LTR("\n"), outname);
         return false;
     }
+    bool coff32 = format == COFF32;
 
     uint8_t header[sizeof(COFF_HEADER) + sizeof(COFF_SECTION_HEADER)];
     uint64_t full_size = 0;
@@ -699,7 +712,7 @@ bool write_coff(const char** names, const Filename_t* files, const uint64_t* siz
             return false;
         }
     }
-    write_coff_header(full_size, header, no_symbols, coff32);
+    write_coff_header(full_size, header, no_symbols, format);
     write_coff_section_header(full_size, no_symbols, readonly, header + sizeof(COFF_HEADER));
     if (fwrite(header, 1, sizeof(header), out) != sizeof(header)) {
         PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
@@ -905,13 +918,17 @@ int ENTRY(int argc, CHAR** argv) {
     if (argc < 2) {
 #ifdef _WIN32
 #ifdef _WIN64
-#ifdef _MSC_VER
+#ifdef __clang__
+        PERROR("" STR_FORMAT, "x64-windows Clang build\n");
+#elif defined _MSC_VER
         PERROR("" STR_FORMAT, "x64-windows MSVC build\n");
 #else
         PERROR("" STR_FORMAT, "x64-windows MinGW build\n");
 #endif
 #else
-#ifdef _MSC_VER
+#ifdef __clang__
+        PERROR("" STR_FORMAT, "x86-windows Clang build\n");
+#elif defined _MSC_VER
         PERROR("" STR_FORMAT, "x86-windows MSVC build\n");
 #else
         PERROR("" STR_FORMAT, "x86-windows MinGW build\n");
@@ -919,11 +936,19 @@ int ENTRY(int argc, CHAR** argv) {
 #endif
 #else
 #ifdef __x86_64__
+#ifdef __clang__
+        PERROR("" STR_FORMAT, "x64 Clang build\n");
+#else
         PERROR("" STR_FORMAT, "x64 GCC build\n");
+#endif
 #elif defined __arm__
         PERROR("" STR_FORMAT, "arm GCC build\n");
 #else
+#ifdef __clang__
+        PERROR("" STR_FORMAT, "x86 Clang build\n");
+#else
         PERROR("" STR_FORMAT, "x86 GCC build\n");
+#endif
 #endif
 #endif
         return 1;
@@ -935,7 +960,7 @@ int ENTRY(int argc, CHAR** argv) {
     char** symbol_names = malloc(argc * sizeof(char*));
     uint64_t *input_sizes = malloc(argc * sizeof(uint64_t));
     char* format = NULL;
-    enum Format out_format = NONE;
+    enum Format out_format = NONE_FORMAT;
     bool readonly = true;
 
     uint32_t input_count = 0;
@@ -974,26 +999,21 @@ int ENTRY(int argc, CHAR** argv) {
                     goto cleanup;
                 }
             } else if (val == LTR('f')) {
-                if (out_format != NONE) {
+                if (out_format != NONE_FORMAT) {
                     PERROR("" STR_FORMAT, "Multiple object formats specified\n");
                     goto cleanup;
                 }
                 char* format = to_ascii(argv[i] + ix);
                 if (format != NULL) {
-                    if (strcmp(format, "coff64") == 0) {
-                        out_format = COFF64;
-                    } else if (strcmp(format, "elf64") == 0) {
-                        out_format = ELF64;
-                    } else if (strcmp(format, "coff32") == 0) {
-                        out_format = COFF32;
-                    } else if (strcmp(format, "elf32") == 0) {
-                        out_format = ELF32;
-                    } else if (strcmp(format, "elf32-arm") == 0) {
-                        out_format = ELF32_ARM;
+                    for (int i = 0; i < NONE_FORMAT; ++i) {
+                        if (strcmp(format, format_names[i]) == 0) {
+                            out_format = i;
+                            break;
+                        }
                     }
                     free(format);
                 }
-                if (out_format == NONE) {
+                if (out_format == NONE_FORMAT) {
                     PERROR("Unsupported object format " F_FORMAT LTR("\n"), argv[i] + ix);
                     goto cleanup;
                 }
@@ -1037,7 +1057,7 @@ int ENTRY(int argc, CHAR** argv) {
         PERROR("" STR_FORMAT, "No input files specified\n");
         goto cleanup;
     }
-    if (out_format == NONE) {
+    if (out_format == NONE_FORMAT) {
 #ifdef _WIN32
     #ifdef _WIN64
         out_format = COFF64;
@@ -1111,8 +1131,8 @@ int ENTRY(int argc, CHAR** argv) {
                 (unsigned long long)input_sizes[i]);
     }
 
-    if (out_format == COFF64 || out_format  == COFF32) {
-        write_coff((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly, out_format == COFF32);
+    if (out_format == COFF64 || out_format  == COFF32 || out_format == COFF64_ARM || out_format == COFF32_ARM) {
+        write_coff((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly, out_format);
     } else {
         write_elf((const char**)symbol_names, input_names, input_sizes, input_count, outname, readonly, out_format);
     }
