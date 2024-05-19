@@ -18,21 +18,26 @@ void write_file(char* name, const uint8_t *data, uint64_t size) {
     fclose(out);
 }
 """
-ALL_TARGETS = ['VC64', 'VC86', 'MINGW', 'GCC64', 'GCC32']
+ALL_TARGETS = ['VC64', 'VC86', 'MINGW', 'GCC64', 'GCC32', 'CLANG64', 'CLANG32']
 
 TARGETS = {
     'coff64' : ['VC64', 'MINGW'],
     'coff32' : ['VC86'],
-    'elf64' : ['GCC64'],
-    'elf32' : ['GCC32']
+    'elf64' : ['GCC64', 'CLANG64'],
+    'elf32' : ['GCC32', 'CLANG32']
 }
+
+DIR = os.path.split(os.getcwd())[0]
+DOCKER_BASE = ['docker', 'run', '-v', DIR + ':/home/me/embed', 'clang']
 
 MAKE_CC = {
     'VC64': lambda src, obj, out: (['cl', src] + ([obj] if obj else []) + ['/nologo', f'/Fe:{out}.exe'], [f'{out}.exe']),
     'VC86': lambda src, obj, out: (['cl', src] + ([obj] if obj else []) + ['/nologo', f'/Fe:{out}.exe'], [f'{out}.exe']),
     'MINGW': lambda src, obj, out: (['gcc', src] + ([obj] if obj else ['-municode']) + ['-o', f'{out}.exe'], [f'{out}.exe']),
-    'GCC64': lambda src, obj, out:  (['wsl', 'gcc', src] + ([obj] if obj else []) + ['-o', f'{out}'], ['wsl', f'./{out}']),
-    'GCC32': lambda src, obj, out:  (['wsl', 'gcc', '-m32', src] + ([obj] if obj else []) + ['-o', f'{out}'], ['wsl', f'./{out}'])
+    'GCC64': lambda src, obj, out: (DOCKER_BASE + ['gcc', src] + ([obj] if obj else []) + ['-o', f'{out}'], DOCKER_BASE + [f'./{out}']),
+    'GCC32': lambda src, obj, out: (DOCKER_BASE + ['gcc', '-m32', src] + ([obj] if obj else []) + ['-o', f'{out}'], DOCKER_BASE + [f'./{out}']),
+    'CLANG64': lambda src, obj, out: (DOCKER_BASE + ['clang', src] + ([obj] if obj else []) + ['-o', out], DOCKER_BASE + [f'./{out}']),
+    'CLANG32': lambda src, obj, out: (DOCKER_BASE + ['clang', '-m32', src] + ([obj] if obj else []) + ['-o', out], DOCKER_BASE + [f'./{out}']),
 }
 
 COFF64_TARGETS = ['MSVC', 'MINGW']
