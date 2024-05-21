@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
+#if defined _WIN32 && (defined _MSC_VER || defined UNICODE)
 #ifndef UNICODE
 #define UNICODE
 #endif
@@ -17,7 +17,9 @@
 #include <wchar.h>
 typedef wchar_t *Filename_t;
 #define OPEN(filename, mode) _wfopen(filename, L##mode)
-#define PERROR(format, ...) fwprintf(stderr, L##format, __VA_ARGS__)
+#define ERROR_FMT(format, ...) fwprintf(stderr, L##format, __VA_ARGS__)
+#define ERROR_PRINT(msg) fwprintf(stderr, L##msg)
+#define OUT_FMT(format, ...) wprintf(L##format, __VA_ARGS__)
 #define REMOVE(filename) _wremove(filename)
 #define ENTRY wmain
 #define CHAR wchar_t
@@ -34,9 +36,14 @@ typedef wchar_t *Filename_t;
 #define F_FORMAT L"%S"
 #endif
 #else
+#ifdef _WIN32
+#define realpath(N, R) _fullpath((R), (N), 256)
+#endif
 typedef char *Filename_t;
 #define OPEN(filename, mode) fopen(filename, mode)
-#define PERROR(...) fprintf(stderr, __VA_ARGS__)
+#define ERROR_FMT(...) fprintf(stderr, __VA_ARGS__)
+#define ERROR_PRINT(msg) fprintf(stderr, msg)
+#define OUT_FMT(...) printf(__VA_ARGS__)
 #define REMOVE(filename) remove(filename)
 #define ENTRY main
 #define CHAR char
@@ -146,13 +153,13 @@ bool write_all_files(FILE *out, const Filename_t *names, const uint64_t *sizes,
         header_size += sizes[i];
         FILE *in = OPEN(names[i], "rb");
         if (in == NULL) {
-            PERROR("Could not open file " F_FORMAT LTR("\n"), names[i]);
+            ERROR_FMT("Could not open file " F_FORMAT LTR("\n"), names[i]);
             return false;
         }
         uint8_t size_buf[8];
         WRITE_U64(size_buf, sizes[i]);
         if (fwrite(size_buf, 1, 8, out) != 8) {
-            PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
+            ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
             fclose(in);
             return false;
         }
@@ -161,12 +168,12 @@ bool write_all_files(FILE *out, const Filename_t *names, const uint64_t *sizes,
         while (to_read > 0) {
             uint32_t data_chunk = (uint32_t)fread(data_buf, 1, 4096, in);
             if (data_chunk == 0) {
-                PERROR("Reading from " F_FORMAT LTR(" failed\n"), names[i]);
+                ERROR_FMT("Reading from " F_FORMAT LTR(" failed\n"), names[i]);
                 fclose(in);
                 return false;
             }
             if (!write_all(out, data_chunk, data_buf)) {
-                PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
+                ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
                 fclose(in);
                 return false;
             }
@@ -179,7 +186,7 @@ bool write_all_files(FILE *out, const Filename_t *names, const uint64_t *sizes,
         uint32_t padding = ALIGN_DIFF(header_size, alignment);
         uint8_t null_data[] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
         if (fwrite(null_data, 1, padding, out) != padding) {
-            PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
+            ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
             return false;
         }
     }
@@ -190,12 +197,12 @@ void write_c_header(const char **symbol_names, uint64_t *input_sizes,
                     uint32_t input_count, Filename_t header, bool readonly) {
     FILE *out = OPEN(header, "w");
     if (out == NULL) {
-        PERROR("Could not open " F_FORMAT LTR("\n"), header);
+        ERROR_FMT("Could not open " F_FORMAT LTR("\n"), header);
         return;
     }
 
     if (fwrite("#pragma once\n#include <stdint.h>\n\n", 1, 34, out) != 34) {
-        PERROR("Writing to " F_FORMAT LTR(" failed\n"), header);
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), header);
         goto error;
     }
     for (uint32_t i = 0; i < input_count; ++i) {
@@ -207,7 +214,7 @@ void write_c_header(const char **symbol_names, uint64_t *input_sizes,
         }
         if (fprintf(out, format, symbol_names[i], symbol_names[i],
                     (unsigned long long)input_sizes[i]) < 0) {
-            PERROR("Writing to " F_FORMAT LTR(" failed\n"), header);
+            ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), header);
             goto error;
         }
     }
@@ -560,7 +567,7 @@ bool write_elf(const char **names, const Filename_t *files,
     FILE *out = OPEN(outname, "wb");
     bool elf32 = format == ELF32 || format == ELF32_ARM;
     if (out == NULL) {
-        PERROR("Could not create file " F_FORMAT LTR("\n"), outname);
+        ERROR_FMT("Could not create file " F_FORMAT LTR("\n"), outname);
         return false;
     }
 
@@ -570,12 +577,11 @@ bool write_elf(const char **names, const Filename_t *files,
         data_size += size[i];
         strtab_size += 2 * strlen(names[i]) + 7;
         if (strtab_size > UINT32_MAX) {
-            PERROR("" STR_FORMAT,
-                   "Total length of all symbol names to large\n");
+            ERROR_PRINT("Total length of all symbol names to large\n");
             goto error;
         }
         if (elf32 && data_size > UINT32_MAX) {
-            PERROR("" STR_FORMAT, "Elf32 object does not fit all data\n");
+            ERROR_PRINT("Elf32 object does not fit all data\n");
             goto error;
         }
     }
@@ -592,7 +598,7 @@ bool write_elf(const char **names, const Filename_t *files,
         write_elf64_header(data_size, no_symbols, strtab_size, machine, header);
     }
     if (!write_all(out, hsize, header)) {
-        PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
 
@@ -615,7 +621,7 @@ bool write_elf(const char **names, const Filename_t *files,
     if (!write_all(out, symtab_size, symtab) ||
         !write_all(out, sizeof(ELF_SHSTRTAB), shstrtab)) {
         free(symtab);
-        PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
     free(symtab);
@@ -625,7 +631,7 @@ bool write_elf(const char **names, const Filename_t *files,
         uint8_t padding[] = {0, 0, 0, 0, 0, 0, 0, 0};
         if (fwrite(padding, 1, ALIGN_DIFF(fsize, align), out) !=
             ALIGN_DIFF(fsize, align)) {
-            PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
+            ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
             goto error;
         }
     }
@@ -641,7 +647,7 @@ bool write_elf(const char **names, const Filename_t *files,
                                     readonly, section_headers);
     }
     if (!write_all(out, sh_size, section_headers)) {
-        PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
 
@@ -806,7 +812,7 @@ bool write_coff(const char **names, const Filename_t *files,
                 const Filename_t outname, bool readonly, enum Format format) {
     FILE *out = OPEN(outname, "wb");
     if (out == NULL) {
-        PERROR("Could not create file " F_FORMAT LTR("\n"), outname);
+        ERROR_FMT("Could not create file " F_FORMAT LTR("\n"), outname);
         return false;
     }
     bool coff32 = format == COFF32;
@@ -816,8 +822,7 @@ bool write_coff(const char **names, const Filename_t *files,
     for (uint64_t i = 0; i < no_symbols; ++i) {
         full_size += size[i];
         if (full_size > INT32_MAX) {
-            PERROR("" STR_FORMAT,
-                   "COFF-objects only support up to 2 GB of data\n");
+            ERROR_PRINT("COFF-objects only support up to 2 GB of data\n");
             return false;
         }
     }
@@ -825,7 +830,7 @@ bool write_coff(const char **names, const Filename_t *files,
     write_coff_section_header(full_size, no_symbols, readonly,
                               header + sizeof(COFF_HEADER));
     if (fwrite(header, 1, sizeof(header), out) != sizeof(header)) {
-        PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
     if (!write_all_files(out, files, size, no_symbols, outname,
@@ -838,7 +843,7 @@ bool write_coff(const char **names, const Filename_t *files,
     uint8_t *symbol_table_buf = write_coff_symbol_table(
         names, size, no_symbols, coff32, &symbol_table_size);
     if (!write_all(out, symbol_table_size, symbol_table_buf)) {
-        PERROR("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
     fclose(out);
@@ -1023,13 +1028,32 @@ cleanup:
     return res;
 }
 
-#define FLAG_COUNT 5
+const CHAR* HELP_MESSAGE = LTR("usage: embed [options] file[:symbol]...\n")
+                           LTR("Embeds a set of input files into an object file.\n")
+                           LTR("Options: \n")
+                           LTR(" -o --ouput <file>         Write output to <file>.\n")
+                           LTR(" -s --symbol-format <fmt>  Use <fmt> to generate symbol names for all input files. \n")
+                           LTR("                           <fmt> must generate valid symbol names, and can contain:\n")
+                           LTR("                             %f  - Filename without extension\n")
+                           LTR("                             %e  - File extension with a leading underscore\n")
+                           LTR("                             %x  - File extension without leading underscore\n")
+                           LTR("                             %d  - Directory of file. \n")
+                           LTR("                             %dN - N-th (0-9) parent directory of file. %d0 is the same as %d\n")
+                           LTR("                             %n  - Index of input in arguments\n")
+                           LTR(" -f --object-format <obj>  Write the output using format <obj>. \n")
+                           LTR("                           Supported formats are: elf32, elf64, elf32-arm, elf64-arm\n")
+                           LTR("                            coff32, coff64, coff32-arm, coff64-arm\n")
+                           LTR(" -w --writable             Write the data to a writable section instead of a readonly section\n")
+                           LTR(" -H --header <header>      Generate a C header file <header> defining all symbols\n")
+                           LTR(" -h --help                 Print this help message\n");
+
+#define FLAG_COUNT 6
 const CHAR FLAGS[] = {
-    LTR('o'), LTR('s'), LTR('f'), LTR('w'), LTR('h')
+    LTR('o'), LTR('s'), LTR('f'), LTR('w'), LTR('h'), LTR('H')
 };
 
 const CHAR* LONG_FLAGS[] = {
-    LTR("output"), LTR("symbol-format"), LTR("object-format"), LTR("writable"), LTR("help")
+    LTR("output"), LTR("symbol-format"), LTR("object-format"), LTR("writable"), LTR("help"), LTR("header")
 };
 
 CHAR check_flag(CHAR* arg, int* i, uint32_t* offset) {
@@ -1059,13 +1083,13 @@ CHAR check_flag(CHAR* arg, int* i, uint32_t* offset) {
 }
 
 int ENTRY(int argc, CHAR **argv) {
-#ifdef _WIN32
+#if defined _WIN32 && defined UNICODE
     _setmode(_fileno(stdout), _O_U16TEXT);
     _setmode(_fileno(stderr), _O_U16TEXT);
 #endif
     int status = 1;
     if (argc < 2) {
-        PERROR("" STR_FORMAT LTR("\n"), HOST_NAME);
+        ERROR_FMT("" STR_FORMAT LTR(", %zd\n"), HOST_NAME, sizeof(CHAR));
         return 1;
     }
 
@@ -1084,18 +1108,18 @@ int ENTRY(int argc, CHAR **argv) {
             uint32_t ix = 0;
             CHAR val = check_flag(argv[i], &i, &ix);
             if (val == LTR('\0')) {
-                PERROR("Unkown flag '" F_FORMAT LTR("'\n"), argv[i]);
+                ERROR_FMT("Unkown flag '" F_FORMAT LTR("'\n"), argv[i]);
                 goto cleanup;
             }
             if (i == argc) {
-                PERROR("No value specified for '" F_FORMAT LTR("'\n"),
+                ERROR_FMT("No value specified for '" F_FORMAT LTR("'\n"),
                         argv[i - 1]);
                 goto cleanup;
             }
 
             if (val == LTR('o')) {
                 if (outname != NULL) {
-                    PERROR("" STR_FORMAT, "Extra output files specified\n");
+                    ERROR_PRINT("Extra output files specified\n");
                     goto cleanup;
                 }
                 uint32_t len = 1 + (uint32_t)STRLEN(argv[i] + ix);
@@ -1103,20 +1127,18 @@ int ENTRY(int argc, CHAR **argv) {
                 memcpy(outname, argv[i] + ix, len * sizeof(CHAR));
             } else if (val == LTR('s')) {
                 if (format != NULL) {
-                    PERROR("" STR_FORMAT,
-                           "Multiple symbol formats specified\n");
+                    ERROR_PRINT("Multiple symbol formats specified\n");
                     goto cleanup;
                 }
                 format = to_symbol(argv[i] + ix, false, true);
                 if (format == NULL) {
-                    PERROR("Invalid symbol format " F_FORMAT LTR("\n"),
+                    ERROR_FMT("Invalid symbol format " F_FORMAT LTR("\n"),
                            argv[i] + ix);
                     goto cleanup;
                 }
             } else if (val == LTR('f')) {
                 if (out_format != NONE_FORMAT) {
-                    PERROR("" STR_FORMAT,
-                           "Multiple object formats specified\n");
+                    ERROR_PRINT("Multiple object formats specified\n");
                     goto cleanup;
                 }
                 char *format = to_ascii(argv[i] + ix);
@@ -1130,18 +1152,22 @@ int ENTRY(int argc, CHAR **argv) {
                     free(format);
                 }
                 if (out_format == NONE_FORMAT) {
-                    PERROR("Unsupported object format " F_FORMAT LTR("\n"),
+                    ERROR_FMT("Unsupported object format " F_FORMAT LTR("\n"),
                            argv[i] + ix);
                     goto cleanup;
                 }
             } else if (val == LTR('w')) {
                 readonly = false;
-            } else if (val == LTR('h')) {
+            } else if (val == LTR('H')) {
                 if (header != NULL) {
-                    PERROR("" STR_FORMAT, "Multiple header files specified\n");
+                    ERROR_PRINT("Multiple header files specified\n");
                     goto cleanup;
                 }
                 header = argv[i] + ix;
+            } else if (val == LTR('h')) {
+               OUT_FMT("" F_FORMAT, HELP_MESSAGE);
+               status = 0;
+               goto cleanup;
             }
         } else {
             CHAR *sep = STRCHR(argv[i], ':');
@@ -1153,13 +1179,13 @@ int ENTRY(int argc, CHAR **argv) {
                 *sep = LTR('\0');
                 CHAR *symbol_name_root = sep + 1;
                 if (*symbol_name_root == LTR('\0')) {
-                    PERROR("Invalid argument " F_FORMAT LTR("\n"), argv[i]);
+                    ERROR_FMT("Invalid argument " F_FORMAT LTR("\n"), argv[i]);
                     goto cleanup;
                 }
                 symbol_names[input_count] =
                     to_symbol(symbol_name_root, false, false);
                 if (symbol_names[input_count] == NULL) {
-                    PERROR("Invalid symbol name " F_FORMAT LTR("\n"),
+                    ERROR_FMT("Invalid symbol name " F_FORMAT LTR("\n"),
                            symbol_name_root);
                     goto cleanup;
                 }
@@ -1174,7 +1200,7 @@ int ENTRY(int argc, CHAR **argv) {
         }
     }
     if (input_count == 0) {
-        PERROR("" STR_FORMAT, "No input files specified\n");
+        ERROR_PRINT("No input files specified\n");
         goto cleanup;
     }
     if (out_format == NONE_FORMAT) {
@@ -1197,8 +1223,7 @@ int ENTRY(int argc, CHAR **argv) {
         FILE *f = OPEN(input_names[i], "rb");
         long size;
         if (f == NULL || fseek(f, 0, SEEK_END) != 0) {
-            PERROR("Failed to open input file " F_FORMAT LTR("\n"),
-                   input_names[i]);
+            ERROR_FMT("Failed to open input file " F_FORMAT LTR("\n"), input_names[i]);
             if (f != NULL) {
                 fclose(f);
             }
@@ -1207,7 +1232,7 @@ int ENTRY(int argc, CHAR **argv) {
         if ((size = ftell(f)) < 0) {
             // This is likely the case on windows. COFF is limited to 4GB
             // anyways...
-            PERROR("File " F_FORMAT LTR(" to large\n"), input_names[i]);
+            ERROR_FMT("File " F_FORMAT LTR(" to large\n"), input_names[i]);
             fclose(f);
             goto cleanup;
         }
@@ -1219,7 +1244,7 @@ int ENTRY(int argc, CHAR **argv) {
         if (symbol_names[i] == NULL) {
             symbol_names[i] = get_symbol(format, input_names[i], i);
             if (symbol_names[i] == NULL) {
-                PERROR("Format gives invalid symbol for " F_FORMAT LTR("\n"),
+                ERROR_FMT("Format gives invalid symbol for " F_FORMAT LTR("\n"),
                        input_names[i]);
                 goto cleanup;
             }
@@ -1229,7 +1254,7 @@ int ENTRY(int argc, CHAR **argv) {
     for (uint32_t i = 0; i < input_count; ++i) {
         for (uint32_t j = i + 1; j < input_count; ++j) {
             if (strcmp(symbol_names[i], symbol_names[j]) == 0) {
-                PERROR("Duplicate symbol name " STR_FORMAT LTR("\n"),
+                ERROR_FMT("Duplicate symbol name " STR_FORMAT LTR("\n"),
                        symbol_names[i]);
                 goto cleanup;
             }
