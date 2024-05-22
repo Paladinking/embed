@@ -66,52 +66,52 @@ enum Format {
     ELF32_ARM,
     MACHO64,
     MACHO32,
+    MACHO64_ARM,
+    MACHO32_ARM,
     NONE_FORMAT
 };
 
 
 const char *format_names[] = {"coff64", "coff32", "coff64-arm", "coff32-arm",
-                              "elf64",  "elf32",  "elf64-arm", "elf32-arm", "macho64", "macho32"};
+                              "elf64",  "elf32",  "elf64-arm", "elf32-arm",
+                              "macho64", "macho32", "macho64-arm", "macho32-arm"};
+
+#define DEFAULTS(name, format) const enum Format DEFAULT_FORMAT = format; const char* HOST_NAME = name
 
 #if (defined _WIN32 || defined __CYGWIN__) && (defined _M_ARM64 || defined __aarch64__)
-const enum Format DEFAULT_FORMAT = COFF64_ARM;
-const char* HOST_NAME = "Windows arm64";
+DEFAULTS("Windows arm64", COFF64_ARM);
 #elif (defined _WIN32 || defined __CYGWIN__) && (defined _M_X64 || defined __x86_64__)
-const enum Format DEFAULT_FORMAT = COFF64;
-const char* HOST_NAME = "Windows x64";
+DEFAULTS("Windows x64", COFF64);
 #elif (defined _WIN32 || defined __CYGWIN__) && (defined _M_ARM || defined __arm__)
-const enum Format DEFAULT_FORMAT = COFF32_ARM;
-const char* HOST_NAME = "Windows arm";
+DEFAULTS("Windows arm", COFF32_ARM);
 #elif (defined _WIN32 || defined __CYGWIN__) && (defined _M_IX86 || defined __i386__)
-const enum Format DEFAULT_FORMAT = COFF32;
-const char* HOST_NAME = "Windows x86";
+DEFAULTS("Windows x86", COFF32);
 #elif (defined __linux__) && (defined _M_ARM || defined __arm__)
-const enum Format DEFAULT_FORMAT = ELF32_ARM;
-const char* HOST_NAME = "Linux arm";
+DEFAULTS("Linux arm", ELF32_ARM);
 #elif (defined __linux__) && (defined _M_IX86 || defined __i386__)
-const enum Format DEFAULT_FORMAT = ELF32;
-const char* HOST_NAME = "Linux x86";
+DEFAULTS("Linux x86", ELF32);
 #elif (defined __linux__) && (defined _M_ARM64 || defined __aarch64__)
-const enum Format DEFAULT_FORMAT = ELF64_ARM;
-const char* HOST_NAME = "Linux arm64";
+DEFAULTS("Linux arm64", ELF64_ARM);
 #elif (defined __linux__) && (defined _M_X64 || defined __x86_64__)
-const enum Format DEFAULT_FORMAT = ELF64;
-const char* HOST_NAME = "Linux x64";
+DEFAULTS("Linux x64", ELF64);
+#elif (defined __APPLE__ && defined __MACH__) && (defined __x86_64__)
+DEFAULTS("OSX x64", MACHO64);
+#elif (defined __APPLE__ && defined __MACH__) && defined(__i386__)
+DEFAULTS("OSX x86", MACHO32);
+#elif (defined __APPLE__ && defined __MACH__) && defined(__arm__)
+DEFAULTS("OSX arm", MACHO32_ARM);
+#elif (defined __APPLE__ && defined __MACH__) && defined(__aarch64__)
+DEFAULTS("OSX arm64", MACHO64_ARM);
 #elif (defined _M_X64 || defined __x86_64__)
-const enum Format DEFAULT_FORMAT = ELF64;
-const char* HOST_NAME = "Unkown x64";
+DEFAULTS("Unkown x64", ELF64);
 #elif (defined _M_IX86 || defined __i386__)
-const enum Format DEFAULT_FORMAT = ELF32;
-const char* HOST_NAME = "Unkown x86";
+DEFAULTS("Unkown x86", ELF32);
 #elif (defined _M_ARM || defined __arm__)
-const enum Format DEFAULT_FORMAT = ELF32_ARM;
-const char* HOST_NAME = "Unkown arm";
+DEFAULTS("Unkown arm", ELF32_ARM);
 #elif (defined _M_ARM64 || defined __aarch64__)
-const enum Format DEFAULT_FORMAT = ELF64_ARM;
-const char* HOST_NAME = "Unkown arm64";
+DEFAULTS("Unkown arm64", ELF64_ARM);
 #else
-const enum Format DEFAULT_FORMAT = ELF64;
-const char* HOST_NAME = "Unkown";
+DEFAULTS("Unkown", ELF64);
 #endif
 
 
@@ -379,12 +379,17 @@ const uint8_t MACHO32_SYMTAB_ENTRY[] = {
 
 
 void write_macho_header(enum Format format, uint32_t *size, uint8_t* data) {
-    if (format == MACHO32) {
+    if (format == MACHO32 || format == MACHO32_ARM) {
         memcpy(data, MACHO32_HEADER, sizeof(MACHO32_HEADER));
         *size = sizeof(MACHO32_HEADER);
+            
     } else {
         memcpy(data, MACHO64_HEADER, sizeof(MACHO64_HEADER));
         *size = sizeof(MACHO64_HEADER);
+    }
+    if (format == MACHO32_ARM || format == MACHO64_ARM) {
+        data[4] = 0xc;
+        WRITE_U32(data + 8, 0x0);
     }
 }
 
@@ -491,6 +496,7 @@ bool write_macho(char **names, const Filename_t *files,
                const uint64_t *size, const uint32_t no_symbols,
                const Filename_t outname, bool readonly, enum Format format) {
     FILE* out = OPEN(outname, "wb");
+    bool m64 = format == MACHO64_ARM || format == MACHO64;
     if (out == NULL) {
         ERROR_FMT("Could not create file " F_FORMAT LTR("\n"), outname);
         return false;
@@ -520,7 +526,7 @@ bool write_macho(char **names, const Filename_t *files,
         goto error;
     }
 
-    if (!write_all_files(out, files, size, no_symbols, outname, header_size + commands_size, format == MACHO32 ? 4 : 8)) {
+    if (!write_all_files(out, files, size, no_symbols, outname, header_size + commands_size, format == m64 ? 8 : 4)) {
         goto error;
     }
 
@@ -1356,7 +1362,8 @@ const CHAR* HELP_MESSAGE = LTR("usage: embed [options] file[:symbol]...\n")
                            LTR("                             %n  - Index of input in arguments\n")
                            LTR(" -f --object-format <obj>  Write the output using format <obj>. \n")
                            LTR("                           Supported formats are: elf32, elf64, elf32-arm, elf64-arm\n")
-                           LTR("                            coff32, coff64, coff32-arm, coff64-arm\n")
+                           LTR("                            coff32, coff64, coff32-arm, coff64-arm, macho32, macho64\n")
+                           LTR("                            macho32-arm, macho64-arm\n")
                            LTR(" -w --writable             Write the data to a writable section instead of a readonly section\n")
                            LTR(" -H --header <header>      Generate a C header file <header> defining all symbols\n")
                            LTR(" -h --help                 Print this help message\n");
@@ -1587,7 +1594,7 @@ int ENTRY(int argc, CHAR **argv) {
         out_format == COFF64_ARM || out_format == COFF32_ARM) {
         write_coff((const char **)symbol_names, input_names, input_sizes,
                    input_count, outname, readonly, out_format);
-    } else if (out_format == MACHO64 || out_format == MACHO32) {
+    } else if (out_format == MACHO64 || out_format == MACHO32 || out_format == MACHO64_ARM || out_format == MACHO32_ARM) {
         write_macho(symbol_names, input_names, input_sizes,
                     input_count, outname, readonly, out_format);
     } else {
