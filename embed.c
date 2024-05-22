@@ -28,7 +28,7 @@ typedef wchar_t *Filename_t;
 #define STRCMP wcscmp
 #define STRCHR(s, l) wcschr(s, L##l)
 #define realpath(N, R) _wfullpath((R), (N), 256)
-#ifdef _MSC_VER
+#if defined _MSC_VER || defined __clang__
 #define STR_FORMAT L"%S"
 #define F_FORMAT L"%s"
 #else
@@ -64,8 +64,14 @@ enum Format {
     ELF32,
     ELF64_ARM,
     ELF32_ARM,
+    MACHO64,
+    MACHO32,
     NONE_FORMAT
 };
+
+
+const char *format_names[] = {"coff64", "coff32", "coff64-arm", "coff32-arm",
+                              "elf64",  "elf32",  "elf64-arm", "elf32-arm", "macho64", "macho32"};
 
 #if (defined _WIN32 || defined __CYGWIN__) && (defined _M_ARM64 || defined __aarch64__)
 const enum Format DEFAULT_FORMAT = COFF64_ARM;
@@ -77,10 +83,10 @@ const char* HOST_NAME = "Windows x64";
 const enum Format DEFAULT_FORMAT = COFF32_ARM;
 const char* HOST_NAME = "Windows arm";
 #elif (defined _WIN32 || defined __CYGWIN__) && (defined _M_IX86 || defined __i386__)
-const enum Format DEFUALT_FORMAT = COFF32;
+const enum Format DEFAULT_FORMAT = COFF32;
 const char* HOST_NAME = "Windows x86";
 #elif (defined __linux__) && (defined _M_ARM || defined __arm__)
-const enum Format DEFUALT_FORMAT = ELF32_ARM;
+const enum Format DEFAULT_FORMAT = ELF32_ARM;
 const char* HOST_NAME = "Linux arm";
 #elif (defined __linux__) && (defined _M_IX86 || defined __i386__)
 const enum Format DEFAULT_FORMAT = ELF32;
@@ -108,8 +114,6 @@ const enum Format DEFAULT_FORMAT = ELF64;
 const char* HOST_NAME = "Unkown";
 #endif
 
-const char *format_names[] = {"coff64", "coff32", "coff64-arm", "coff32-arm",
-                              "elf64",  "elf32",  "elf32-arm"};
 
 #define WRITE_U32(ptr, val)                                                    \
     do {                                                                       \
@@ -260,9 +264,19 @@ const uint8_t MACHO64_HEADER[] = {
     0x7, 0x0, 0x0, 0x1, // cputype x86 | x64
     0x3, 0x0, 0x0, 0x0, // cpu subtype X86_64_ALL
     0x1, 0x0, 0x0, 0x0, // filetype relocatable object
-    0x0, 0x1, 0x0, 0x0, // Number of load commands
-    0xb0, 0x0, 0x0, 0x0, // Total size of commands
+    0x3, 0x0, 0x0, 0x0, // Number of load commands
+    0x0, 0x1, 0x0, 0x0, // Total size of commands
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 // Flags and reserved
+};
+
+const uint8_t MACHO32_HEADER[] = {
+    0xce, 0xfa, 0xed, 0xfe, // Magic
+    0x7, 0x0, 0x0, 0x0, // cputype x86
+    0x3, 0x0, 0x0, 0x0, // cpu subtype X86_ALL
+    0x1, 0x0, 0x0, 0x0, // filetype relocatable object
+    0x3, 0x0, 0x0, 0x0, // Number of load commands
+    0xe4, 0x0, 0x0, 0x0, // Total size of commands
+    0x0, 0x0, 0x0, 0x0 // Flags
 };
 
 const uint8_t MACHO64_COMMANDS[] = {
@@ -272,7 +286,7 @@ const uint8_t MACHO64_COMMANDS[] = {
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Name None
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Virtual address 0
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Virtual size
-    0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, // File offset
+    0x20, 0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // File offset
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // File size
     0x7, 0x0, 0x0, 0x0, 0x7, 0x0, 0x0, 0x0, // Max and inital protection
     0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Number of sections and flags
@@ -283,9 +297,9 @@ const uint8_t MACHO64_COMMANDS[] = {
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Segment name __DATA 
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Section virtual address
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Section size
-    0xAA, 0xAA, 0xAA, 0xAA, // Section file offset
+    0x20, 0x1, 0x0, 0x0, // Section file offset
     0x0, 0x0, 0x0, 0x0, // Section alignment 1
-    0xAA, 0xAA, 0xAA, 0xAA, 0x0, 0x0, 0x0, 0x0, // Relocations offset + count
+    0xFF, 0xFF, 0xFF, 0xFF, 0x0, 0x0, 0x0, 0x0, // Relocations offset + count
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // flags and reserved
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // reserved
 
@@ -296,7 +310,235 @@ const uint8_t MACHO64_COMMANDS[] = {
     0xFF, 0xFF, 0xFF, 0xFF, // String table size
 
     0xB, 0x0, 0x0, 0x0, 0x50, 0x0, 0x0, 0x0, // Dymsymdtab Id and size
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // 0 Local symbols
+    0x0, 0x0, 0x0, 0x0, 0xFF, 0xFF, 0xFF, 0xFF, // External symbols
+    0xFF, 0xFF, 0xFF, 0xFF, 0x0, 0x0, 0x0, 0x0, // 0 undefined symobols    
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // No toc
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // No modtab
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // No external reference data
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // No indirect symtab
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // No external relocations
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 // No local relocations
 };
+
+const uint8_t MACHO32_COMMANDS[] = {
+    0x1, 0x0, 0x0, 0x0, // Command type segment,
+    0x7c, 0x0, 0x0, 0x0, // Command size 
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Name None
+    0x0, 0x0, 0x0, 0x0, // Virtual address 0
+    0xFF, 0xFF, 0xFF, 0xFF, // Virtual size
+    0x0, 0x1, 0x0, 0x0, // File offset
+    0xFF, 0xFF, 0xFF, 0xFF, // File size
+    0x7, 0x0, 0x0, 0x0, 0x7, 0x0, 0x0, 0x0, // Max and inital protection
+    0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Number of sections and flags
+
+    '_', '_', 'c', 'o', 'n', 's', 't', 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Section name __const
+    '_', '_', 'D', 'A', 'T', 'A', 0x0, 0x0,
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Segment name __DATA 
+    0x0, 0x0, 0x0, 0x0, // Section virtual address
+    0xFF, 0xFF, 0xFF, 0xFF, // Section size
+    0x0, 0x1, 0x0, 0x0, // Section file offset
+    0x0, 0x0, 0x0, 0x0, // Section alignment 1
+    0xFF, 0xFF, 0xFF, 0xFF, 0x0, 0x0, 0x0, 0x0, // Relocations offset + count
+    0x0, 0x0, 0x0, 0x0, // Flags
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Reserved
+    
+    0x2, 0x0, 0x0, 0x0, 0x18, 0x0, 0x0, 0x0, // Symtab Id and size
+    0xFF, 0xFF, 0xFF, 0xFF, // Symbol talbe file offset
+    0xFF, 0xFF, 0xFF, 0xFF, // Number of symbols
+    0xFF, 0xFF, 0xFF, 0xFF, // String table file offset
+    0xFF, 0xFF, 0xFF, 0xFF, // String table size
+
+    0xB, 0x0, 0x0, 0x0, 0x50, 0x0, 0x0, 0x0, // Dymsymdtab Id and size
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // 0 Local symbols
+    0x0, 0x0, 0x0, 0x0, 0xFF, 0xFF, 0xFF, 0xFF, // External symbols
+    0xFF, 0xFF, 0xFF, 0xFF, 0x0, 0x0, 0x0, 0x0, // 0 undefined symobols    
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // No toc
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // No modtab
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // No external reference data
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // No indirect symtab
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // No external relocations
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 // No local relocations 
+};
+
+const uint8_t MACHO64_SYMTAB_ENTRY[] = {
+    0xFF, 0xFF, 0xFF, 0xFF, // String table offset 
+    0x0F, 0x1, // External symbol used in section 1
+    0x0, 0x0, // n_desc = 0
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF // Value
+};
+
+const uint8_t MACHO32_SYMTAB_ENTRY[] = {
+    0xFF, 0xFF, 0xFF, 0xFF, // String table offset,
+    0x0F, 0x1, // External symbol used in section 1
+    0x0, 0x0, // n_desc = 0
+    0xFF, 0xFF, 0xFF, 0xFF // Value
+};
+
+
+void write_macho_header(enum Format format, uint32_t *size, uint8_t* data) {
+    if (format == MACHO32) {
+        memcpy(data, MACHO32_HEADER, sizeof(MACHO32_HEADER));
+        *size = sizeof(MACHO32_HEADER);
+    } else {
+        memcpy(data, MACHO64_HEADER, sizeof(MACHO64_HEADER));
+        *size = sizeof(MACHO64_HEADER);
+    }
+}
+
+void write_macho_commands(enum Format format, uint64_t data_size, uint32_t no_symbols, uint64_t strtable_size, uint64_t* size, uint8_t* data) {
+    if (format == MACHO32) {
+        memcpy(data, MACHO32_COMMANDS, sizeof(MACHO32_COMMANDS));
+        *size = sizeof(MACHO32_COMMANDS);
+        WRITE_U32(data + 28, ALIGN_TO(data_size, 4));
+        WRITE_U32(data + 36, ALIGN_TO(data_size, 4));
+        WRITE_U32(data + 92, data_size);
+        data_size += sizeof(MACHO32_HEADER) + sizeof(MACHO32_COMMANDS);
+        data_size = ALIGN_TO(data_size, 4);
+        WRITE_U32(data + 104, data_size);
+        WRITE_U32(data + 132, data_size);
+        WRITE_U32(data + 136, 2 * no_symbols);
+        WRITE_U32(data + 140, data_size + 2 * sizeof(MACHO32_SYMTAB_ENTRY) * no_symbols);
+        WRITE_U32(data + 144, strtable_size);
+        WRITE_U32(data + 168, 2 * no_symbols);
+        WRITE_U32(data + 172, 2 * no_symbols);
+    } else {
+        memcpy(data, MACHO64_COMMANDS, sizeof(MACHO64_COMMANDS));
+        *size = sizeof(MACHO64_COMMANDS);
+        WRITE_U64(data + 32, ALIGN_TO(data_size, 8));
+        WRITE_U64(data + 48, ALIGN_TO(data_size, 8));
+        WRITE_U64(data + 112, data_size);
+        data_size += sizeof(MACHO64_HEADER) + sizeof(MACHO64_COMMANDS);
+        data_size = ALIGN_TO(data_size, 8);
+        WRITE_U32(data + 128, data_size);
+        WRITE_U32(data + 160, data_size);
+        WRITE_U32(data + 164, 2 * no_symbols);
+        WRITE_U32(data + 168, data_size + 2 * sizeof(MACHO64_SYMTAB_ENTRY) * no_symbols);
+        WRITE_U32(data + 172, strtable_size);
+        WRITE_U32(data + 196, 2 * no_symbols);
+        WRITE_U32(data + 200, 2 * no_symbols);
+    }
+}
+
+typedef struct macho_symbol {
+    char* name;
+    uint64_t offset;
+} macho_symbol_t;
+
+int sym_cmp(const void* a, const void* b) {
+    const macho_symbol_t *a1 = a;
+    const macho_symbol_t *b1 = b;
+    return strcmp(a1->name, b1->name);
+}
+
+uint8_t* write_macho_symbol_table(enum Format format, const uint64_t* sizes, char** names, uint32_t no_symbols, uint64_t* size) {
+    if (format == MACHO32) {
+        *size = 2 * no_symbols * sizeof(MACHO32_SYMTAB_ENTRY) + 1;
+    } else {
+        *size = 2 * no_symbols * sizeof(MACHO64_SYMTAB_ENTRY) + 1;
+    }
+    uint64_t strtable_base = *size - 1;
+    macho_symbol_t* sorted_names = malloc(2 * no_symbols * sizeof(macho_symbol_t));
+    for (uint32_t i = 0; i < no_symbols; ++i) {
+        uint32_t name_len = strlen(names[i]);
+        *size += 2 * name_len + 9;
+        sorted_names[2 * i].name = malloc(name_len + 7);
+        sorted_names[2 * i].name[0] = '_';
+        memcpy(sorted_names[2 * i].name + 1, names[i], name_len);
+        memcpy(sorted_names[2 * i].name + 1 + name_len, "_size", 6);
+        if (i == 0) {
+            sorted_names[2 * i].offset = 0;
+        } else {
+            sorted_names[2 * i].offset = sorted_names[2 * (i - 1)].offset + sizes[i - 1] + 8;
+        }
+        sorted_names[2 * i + 1].offset = sorted_names[2 * i].offset + 8;
+        sorted_names[2 * i + 1].name = malloc(name_len + 2);
+        sorted_names[2 * i + 1].name[0] = '_';
+        memcpy(sorted_names[2 * i + 1].name + 1, names[i], name_len + 1);
+    }
+    qsort(sorted_names, 2 * no_symbols, sizeof(macho_symbol_t), sym_cmp);
+    uint8_t* data = malloc(*size);
+    uint8_t* strtable = data + strtable_base;
+    uint64_t data_base = 0;
+    *strtable = '\0';
+    strtable_base = 1;
+    for (uint32_t i = 0; i < 2 * no_symbols; ++i) {
+        uint32_t name_len = strlen(sorted_names[i].name);
+        if (format == MACHO32) {
+            memcpy(data + data_base, MACHO32_SYMTAB_ENTRY, sizeof(MACHO32_SYMTAB_ENTRY));
+            WRITE_U32(data + data_base, strtable_base);
+            WRITE_U32(data + data_base + 8, sorted_names[i].offset);
+            data_base += sizeof(MACHO32_SYMTAB_ENTRY);
+        } else {
+            memcpy(data + data_base, MACHO64_SYMTAB_ENTRY, sizeof(MACHO64_SYMTAB_ENTRY));
+            WRITE_U32(data + data_base, strtable_base);
+            WRITE_U64(data + data_base + 8, sorted_names[i].offset);
+            data_base += sizeof(MACHO64_SYMTAB_ENTRY);
+        }
+        memcpy(strtable + strtable_base, sorted_names[i].name, name_len + 1);
+        free(sorted_names[i].name);
+        strtable_base += name_len + 1;
+    }
+
+    free(sorted_names);
+    return data;
+}
+
+
+bool write_macho(char **names, const Filename_t *files,
+               const uint64_t *size, const uint32_t no_symbols,
+               const Filename_t outname, bool readonly, enum Format format) {
+    FILE* out = OPEN(outname, "wb");
+    if (out == NULL) {
+        ERROR_FMT("Could not create file " F_FORMAT LTR("\n"), outname);
+        return false;
+    }
+    uint8_t header[sizeof(MACHO64_HEADER)];
+    uint32_t header_size;
+    write_macho_header(format, &header_size, header);
+    if (!write_all(out, header_size, header)) {
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        goto error;
+    }
+    uint64_t strtable_size = 1;
+    uint64_t data_size = 0;
+    for (uint32_t i = 0; i < no_symbols; ++i) {
+        data_size += size[i] + 8;
+        strtable_size += 2 * strlen(names[i]) + 9;
+        if (data_size > 0xffffffff || strtable_size > 0xffffffff) {
+            ERROR_PRINT("Object does not fit all data\n");
+            goto error;
+        }
+    }
+    uint64_t commands_size;
+    uint8_t commands[sizeof(MACHO64_COMMANDS)];
+    write_macho_commands(format, data_size, no_symbols, strtable_size, &commands_size, commands);
+    if (!write_all(out, commands_size, commands)) {
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        goto error;
+    }
+
+    if (!write_all_files(out, files, size, no_symbols, outname, header_size + commands_size, format == MACHO32 ? 4 : 8)) {
+        goto error;
+    }
+
+    uint64_t symbols_size;
+    uint8_t* data = write_macho_symbol_table(format, size, names, no_symbols, &symbols_size);
+    if (!write_all(out, symbols_size, data)) {
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        goto error;
+    }
+    free(data);
+
+    fclose(out);
+    return true;
+error:
+    fclose(out);
+    REMOVE(outname);
+    return false;
+}
 
 const uint8_t ELF64_HEADER[] = {
     0x7f, 'E',  'L',  'F',                   // Magic
@@ -1339,11 +1581,15 @@ int ENTRY(int argc, CHAR **argv) {
                input_names[i], symbol_names[i],
                (unsigned long long)input_sizes[i]);
     }*/
+    ERROR_FMT("FMT: %d\n", out_format);
 
     if (out_format == COFF64 || out_format == COFF32 ||
         out_format == COFF64_ARM || out_format == COFF32_ARM) {
         write_coff((const char **)symbol_names, input_names, input_sizes,
                    input_count, outname, readonly, out_format);
+    } else if (out_format == MACHO64 || out_format == MACHO32) {
+        write_macho(symbol_names, input_names, input_sizes,
+                    input_count, outname, readonly, out_format);
     } else {
         write_elf((const char **)symbol_names, input_names, input_sizes,
                   input_count, outname, readonly, out_format);
