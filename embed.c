@@ -394,7 +394,7 @@ void write_macho_header(enum Format format, uint32_t *size, uint8_t* data) {
 }
 
 void write_macho_commands(enum Format format, uint64_t data_size, uint32_t no_symbols, uint64_t strtable_size, uint64_t* size, uint8_t* data) {
-    if (format == MACHO32) {
+    if (format == MACHO32 || format == MACHO32_ARM) {
         memcpy(data, MACHO32_COMMANDS, sizeof(MACHO32_COMMANDS));
         *size = sizeof(MACHO32_COMMANDS);
         WRITE_U32(data + 28, ALIGN_TO(data_size, 4));
@@ -439,7 +439,7 @@ int sym_cmp(const void* a, const void* b) {
 }
 
 uint8_t* write_macho_symbol_table(enum Format format, const uint64_t* sizes, char** names, uint32_t no_symbols, uint64_t* size) {
-    if (format == MACHO32) {
+    if (format == MACHO32 || format == MACHO32_ARM) {
         *size = 2 * no_symbols * sizeof(MACHO32_SYMTAB_ENTRY) + 1;
     } else {
         *size = 2 * no_symbols * sizeof(MACHO64_SYMTAB_ENTRY) + 1;
@@ -471,7 +471,7 @@ uint8_t* write_macho_symbol_table(enum Format format, const uint64_t* sizes, cha
     strtable_base = 1;
     for (uint32_t i = 0; i < 2 * no_symbols; ++i) {
         uint32_t name_len = strlen(sorted_names[i].name);
-        if (format == MACHO32) {
+        if (format == MACHO32 || format == MACHO32_ARM) {
             memcpy(data + data_base, MACHO32_SYMTAB_ENTRY, sizeof(MACHO32_SYMTAB_ENTRY));
             WRITE_U32(data + data_base, strtable_base);
             WRITE_U32(data + data_base + 8, sorted_names[i].offset);
@@ -526,7 +526,7 @@ bool write_macho(char **names, const Filename_t *files,
         goto error;
     }
 
-    if (!write_all_files(out, files, size, no_symbols, outname, header_size + commands_size, format == m64 ? 8 : 4)) {
+    if (!write_all_files(out, files, size, no_symbols, outname, header_size + commands_size, m64 ? 8 : 4)) {
         goto error;
     }
 
