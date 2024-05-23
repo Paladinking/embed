@@ -55,22 +55,40 @@ typedef char *Filename_t;
 #define F_FORMAT "%s"
 #endif
 
+#define BIT32 0x1000000
+#define BIT64 0x2000000
+#define MACHINE_X86 0x1
+#define MACHINE_ARM 0x2
+#define TYPE_COFF 0x10000
+#define TYPE_ELF 0x20000
+#define TYPE_MACHO 0x30000
+
 enum Format {
-    COFF64,
-    COFF32,
-    COFF64_ARM,
-    COFF32_ARM,
-    ELF64,
-    ELF32,
-    ELF64_ARM,
-    ELF32_ARM,
-    MACHO64,
-    MACHO32,
-    MACHO64_ARM,
-    MACHO32_ARM,
-    NONE_FORMAT
+    COFF64 = BIT64 | TYPE_COFF | MACHINE_X86,
+    COFF32 = BIT32 | TYPE_COFF | MACHINE_X86,
+    COFF64_ARM = BIT64 | TYPE_COFF | MACHINE_ARM,
+    COFF32_ARM = BIT32 | TYPE_COFF | MACHINE_ARM,
+    ELF64 = BIT64 | TYPE_ELF | MACHINE_X86,
+    ELF32 = BIT32 | TYPE_ELF | MACHINE_X86,
+    ELF64_ARM = BIT64 | TYPE_ELF | MACHINE_ARM,
+    ELF32_ARM = BIT32 | TYPE_ELF | MACHINE_ARM,
+    MACHO64 = BIT64 | TYPE_MACHO | MACHINE_X86,
+    MACHO32 = BIT32 | TYPE_MACHO | MACHINE_X86,
+    MACHO64_ARM = BIT64 | TYPE_MACHO | MACHINE_ARM,
+    MACHO32_ARM = BIT32 | TYPE_MACHO | MACHINE_ARM,
+    NONE_FORMAT = 0
 };
 
+#define FORMAT_COUNT 12
+
+#define IS_64BIT(format) (((format) & 0xf000000) == BIT64)
+#define IS_32BIT(format) (((format) & 0xf000000) == BIT32)
+#define IS_COFF(format) (((format) & 0xff0000) == TYPE_COFF)
+#define IS_ELF(format) (((format) & 0xff0000) == TYPE_ELF)
+#define IS_MACHO(format) (((format) & 0xff0000) == TYPE_MACHO)
+
+enum Format FORMATS[] = {COFF64, COFF32, COFF64_ARM, COFF32_ARM, ELF64, ELF32, ELF64_ARM,
+                         ELF32_ARM, MACHO64, MACHO32, MACHO64_ARM, MACHO32_ARM};
 
 const char *format_names[] = {"coff64", "coff32", "coff64-arm", "coff32-arm",
                               "elf64",  "elf32",  "elf64-arm", "elf32-arm",
@@ -496,7 +514,7 @@ bool write_macho(char **names, const Filename_t *files,
                const uint64_t *size, const uint32_t no_symbols,
                const Filename_t outname, bool readonly, enum Format format) {
     FILE* out = OPEN(outname, "wb");
-    bool m64 = format == MACHO64_ARM || format == MACHO64;
+    bool m64 = IS_64BIT(format);
     if (out == NULL) {
         ERROR_FMT("Could not create file " F_FORMAT LTR("\n"), outname);
         return false;
@@ -885,7 +903,7 @@ bool write_elf(const char **names, const Filename_t *files,
                const uint64_t *size, const uint32_t no_symbols,
                const Filename_t outname, bool readonly, enum Format format) {
     FILE *out = OPEN(outname, "wb");
-    bool elf32 = format == ELF32 || format == ELF32_ARM;
+    bool elf32 = IS_32BIT(format);
     if (out == NULL) {
         ERROR_FMT("Could not create file " F_FORMAT LTR("\n"), outname);
         return false;
@@ -1135,7 +1153,6 @@ bool write_coff(const char **names, const Filename_t *files,
         ERROR_FMT("Could not create file " F_FORMAT LTR("\n"), outname);
         return false;
     }
-    bool coff32 = format == COFF32;
 
     uint8_t header[sizeof(COFF_HEADER) + sizeof(COFF_SECTION_HEADER)];
     uint64_t full_size = 0;
@@ -1161,7 +1178,7 @@ bool write_coff(const char **names, const Filename_t *files,
 
     uint32_t symbol_table_size;
     uint8_t *symbol_table_buf = write_coff_symbol_table(
-        names, size, no_symbols, coff32, &symbol_table_size);
+        names, size, no_symbols, IS_32BIT(format), &symbol_table_size);
     if (!write_all(out, symbol_table_size, symbol_table_buf)) {
         ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
@@ -1361,8 +1378,8 @@ const CHAR* HELP_MESSAGE = LTR("usage: embed [options] file[:symbol]...\n")
                            LTR("                             %dN - N-th (0-9) parent directory of file. %d0 is the same as %d\n")
                            LTR("                             %n  - Index of input in arguments\n")
                            LTR(" -f --object-format <obj>  Write the output using format <obj>. \n")
-                           LTR("                           Supported formats are: elf32, elf64, elf32-arm, elf64-arm\n")
-                           LTR("                            coff32, coff64, coff32-arm, coff64-arm, macho32, macho64\n")
+                           LTR("                           Supported formats are: elf32, elf64, elf32-arm, elf64-arm,\n")
+                           LTR("                            coff32, coff64, coff32-arm, coff64-arm, macho32, macho64,\n")
                            LTR("                            macho32-arm, macho64-arm\n")
                            LTR(" -w --writable             Write the data to a writable section instead of a readonly section\n")
                            LTR(" -H --header <header>      Generate a C header file <header> defining all symbols\n")
@@ -1464,9 +1481,9 @@ int ENTRY(int argc, CHAR **argv) {
                 }
                 char *format = to_ascii(argv[i] + ix);
                 if (format != NULL) {
-                    for (int i = 0; i < NONE_FORMAT; ++i) {
+                    for (int i = 0; i < FORMAT_COUNT; ++i) {
                         if (strcmp(format, format_names[i]) == 0) {
-                            out_format = i;
+                            out_format = FORMATS[i];
                             break;
                         }
                     }
@@ -1529,7 +1546,7 @@ int ENTRY(int argc, CHAR **argv) {
     }
     if (outname == NULL) {
         outname = malloc(10 * sizeof(CHAR));
-        if (out_format == COFF64) {
+        if (IS_COFF(out_format)) {
             memcpy(outname, LTR("embed.obj"), 10 * sizeof(CHAR));
         } else {
             memcpy(outname, LTR("embed.o"), 8 * sizeof(CHAR));
@@ -1582,19 +1599,10 @@ int ENTRY(int argc, CHAR **argv) {
         }
     }
 
-    /*for (uint32_t i = 0; i < input_count; ++i) {
-        PERROR("File: " F_FORMAT LTR(", symbol: ")
-                   STR_FORMAT LTR(", size: %llu\n"),
-               input_names[i], symbol_names[i],
-               (unsigned long long)input_sizes[i]);
-    }*/
-    ERROR_FMT("FMT: %d\n", out_format);
-
-    if (out_format == COFF64 || out_format == COFF32 ||
-        out_format == COFF64_ARM || out_format == COFF32_ARM) {
+    if (IS_COFF(out_format)) {
         write_coff((const char **)symbol_names, input_names, input_sizes,
                    input_count, outname, readonly, out_format);
-    } else if (out_format == MACHO64 || out_format == MACHO32 || out_format == MACHO64_ARM || out_format == MACHO32_ARM) {
+    } else if (IS_MACHO(out_format)) {
         write_macho(symbol_names, input_names, input_sizes,
                     input_count, outname, readonly, out_format);
     } else {
