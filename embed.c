@@ -79,8 +79,6 @@ enum Format {
     NONE_FORMAT = 0
 };
 
-#define FORMAT_COUNT 12
-
 #define IS_64BIT(format) (((format) & 0xf000000) == BIT64)
 #define IS_32BIT(format) (((format) & 0xf000000) == BIT32)
 #define IS_COFF(format) (((format) & 0xff0000) == TYPE_COFF)
@@ -93,6 +91,9 @@ enum Format FORMATS[] = {COFF64, COFF32, COFF64_ARM, COFF32_ARM, ELF64, ELF32, E
 const char *format_names[] = {"coff64", "coff32", "coff64-arm", "coff32-arm",
                               "elf64",  "elf32",  "elf64-arm", "elf32-arm",
                               "macho64", "macho32", "macho64-arm", "macho32-arm"};
+
+#define FORMAT_NAME_COUNT 12
+
 
 #define DEFAULTS(name, format) const enum Format DEFAULT_FORMAT = format; const char* HOST_NAME = name
 
@@ -248,35 +249,6 @@ error:
     REMOVE(header);
 }
 
-struct segment_command_64 {
-   uint32_t cmd;
-   uint32_t cmdsize;
-   char segname[16];
-   uint64_t vmaddr;
-   uint64_t vmsize;
-   uint64_t fileoff;
-   uint64_t filesize;
-   int32_t maxprot;
-   int32_t initprot;
-   uint32_t nsects;
-   uint32_t flags;
-};
-
-struct section_64 {
-   char sectname[16];
-   char segname[16];
-   uint64_t addr;
-   uint64_t size;
-   uint32_t offset;
-   uint32_t align;
-   uint32_t reloff;
-   uint32_t nreloc;
-   uint32_t flags;
-   uint32_t reserved1;
-   uint32_t reserved2;
-   uint32_t reserved3;
-};
-
 const uint8_t MACHO64_HEADER[] = {
     0xcf, 0xfa, 0xed, 0xfe, // Magic
     0x7, 0x0, 0x0, 0x1, // cputype x86 | x64
@@ -310,7 +282,7 @@ const uint8_t MACHO64_COMMANDS[] = {
     0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Number of sections and flags
 
     '_', '_', 'c', 'o', 'n', 's', 't', 0x0,
-    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Section name __const
+    0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Section name
     '_', '_', 'D', 'A', 'T', 'A', 0x0, 0x0,
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Segment name __DATA 
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Section virtual address
@@ -411,7 +383,7 @@ void write_macho_header(enum Format format, uint32_t *size, uint8_t* data) {
     }
 }
 
-void write_macho_commands(enum Format format, uint64_t data_size, uint32_t no_symbols, uint64_t strtable_size, uint64_t* size, uint8_t* data) {
+void write_macho_commands(enum Format format, uint64_t data_size, uint32_t no_symbols, uint64_t strtable_size, bool readonly, uint64_t* size, uint8_t* data) {
     if (format == MACHO32 || format == MACHO32_ARM) {
         memcpy(data, MACHO32_COMMANDS, sizeof(MACHO32_COMMANDS));
         *size = sizeof(MACHO32_COMMANDS);
@@ -427,6 +399,9 @@ void write_macho_commands(enum Format format, uint64_t data_size, uint32_t no_sy
         WRITE_U32(data + 144, strtable_size);
         WRITE_U32(data + 168, 2 * no_symbols);
         WRITE_U32(data + 172, 2 * no_symbols);
+        if (!readonly) {
+            memcpy(data + 56, "__data", 7);
+        }
     } else {
         memcpy(data, MACHO64_COMMANDS, sizeof(MACHO64_COMMANDS));
         *size = sizeof(MACHO64_COMMANDS);
@@ -442,6 +417,9 @@ void write_macho_commands(enum Format format, uint64_t data_size, uint32_t no_sy
         WRITE_U32(data + 172, strtable_size);
         WRITE_U32(data + 196, 2 * no_symbols);
         WRITE_U32(data + 200, 2 * no_symbols);
+        if (!readonly) {
+            memcpy(data + 72, "__data", 7);
+        }
     }
 }
 
@@ -538,7 +516,7 @@ bool write_macho(char **names, const Filename_t *files,
     }
     uint64_t commands_size;
     uint8_t commands[sizeof(MACHO64_COMMANDS)];
-    write_macho_commands(format, data_size, no_symbols, strtable_size, &commands_size, commands);
+    write_macho_commands(format, data_size, no_symbols, strtable_size, readonly, &commands_size, commands);
     if (!write_all(out, commands_size, commands)) {
         ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
@@ -1481,7 +1459,7 @@ int ENTRY(int argc, CHAR **argv) {
                 }
                 char *format = to_ascii(argv[i] + ix);
                 if (format != NULL) {
-                    for (int i = 0; i < FORMAT_COUNT; ++i) {
+                    for (int i = 0; i < FORMAT_NAME_COUNT; ++i) {
                         if (strcmp(format, format_names[i]) == 0) {
                             out_format = FORMATS[i];
                             break;
