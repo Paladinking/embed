@@ -27,6 +27,7 @@ typedef wchar_t *Filename_t;
 #define STRLEN wcslen
 #define STRCMP wcscmp
 #define STRCHR(s, l) wcschr(s, L##l)
+#define STRRCHR(s, l) wcsrchr(s, L##l)
 #define realpath(N, R) _wfullpath((R), (N), 256)
 #if defined _MSC_VER || defined __clang__
 #define STR_FORMAT L"%S"
@@ -51,6 +52,7 @@ typedef char *Filename_t;
 #define STRLEN strlen
 #define STRCMP strcmp
 #define STRCHR(s, l) strchr(s, l)
+#define STRRCHR(s, l) strrchr(s, l)
 #define STR_FORMAT "%s"
 #define F_FORMAT "%s"
 #endif
@@ -228,6 +230,10 @@ void write_c_header(const char **symbol_names, uint64_t *input_sizes,
         ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), header);
         goto error;
     }
+    if (fwrite("#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n", 1, 40, out) != 40) {
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), header);
+        goto error;
+    }
     for (uint32_t i = 0; i < input_count; ++i) {
         const char *format =
             "extern uint64_t %s_size;\nextern uint8_t %s[%llu];\n\n";
@@ -240,6 +246,10 @@ void write_c_header(const char **symbol_names, uint64_t *input_sizes,
             ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), header);
             goto error;
         }
+    }
+    if (fwrite("#ifdef __cplusplus\n}\n#endif\n", 1, 28, out) != 28) {
+        ERROR_FMT("Write to " F_FORMAT LTR(" failed\n"), header);
+        goto error;
     }
 
     fclose(out);
@@ -1486,7 +1496,10 @@ int ENTRY(int argc, CHAR **argv) {
                goto cleanup;
             }
         } else {
-            CHAR *sep = STRCHR(argv[i], ':');
+            CHAR *sep = STRRCHR(argv[i], ':');
+            if (sep != NULL && sep - argv[i] == 1 && ((argv[i][0] >= LTR('A') && argv[i][0] <= 'Z') || (argv[i][0] >= LTR('a') && argv[i][0] <= 'z'))) {
+                sep = STRRCHR(argv[i] + 2, ':');
+            }
             if (sep != NULL) {
                 uint32_t len = (uint32_t)(sep - argv[i]);
                 input_names[input_count] = malloc((len + 1) * sizeof(CHAR));
