@@ -173,9 +173,9 @@ bool write_all(FILE *file, uint32_t size, const uint8_t *buf) {
 
 bool write_all_files(FILE *out, const Filename_t *names, const uint64_t *sizes,
                      uint32_t no_entries, const Filename_t outname,
-                     uint64_t header_size, bool null_terminate, uint64_t alignment) {
+                     uint64_t header_size, bool null_terminate, uint32_t alignment) {
     for (uint32_t i = 0; i < no_entries; ++i) {
-        header_size += sizes[i];
+        header_size += ALIGN_TO(sizes[i], 8);
         FILE *in = OPEN(names[i], "rb");
         if (in == NULL) {
             ERROR_FMT("Could not open file " F_FORMAT LTR("\n"), names[i]);
@@ -188,7 +188,7 @@ bool write_all_files(FILE *out, const Filename_t *names, const uint64_t *sizes,
             fclose(in);
             return false;
         }
-        uint32_t to_read = (uint32_t)sizes[i];
+        uint64_t to_read = sizes[i];
         uint8_t data_buf[4096];
         while (to_read > 0) {
             uint32_t data_chunk = (uint32_t)fread(data_buf, 1, 4096, in);
@@ -212,16 +212,25 @@ bool write_all_files(FILE *out, const Filename_t *names, const uint64_t *sizes,
             }
             to_read -= data_chunk;
         }
+        if (ALIGN_DIFF(sizes[i], 8) != 0) {
+            uint8_t null_data[] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
+            uint32_t padding = ALIGN_DIFF(sizes[i], 8);
+            if (fwrite(null_data, 1, padding, out) != padding) {
+                ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
+                return false;
+            }
+        }
         fclose(in);
     }
     header_size += 8 * no_entries;
     if (ALIGN_DIFF(header_size, alignment) != 0) {
-        uint32_t padding = ALIGN_DIFF(header_size, alignment);
         uint8_t null_data[] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
+        uint32_t padding = ALIGN_DIFF(header_size, alignment);
         if (fwrite(null_data, 1, padding, out) != padding) {
             ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
             return false;
         }
+
     }
     return true;
 }
@@ -306,7 +315,7 @@ const uint8_t MACHO64_COMMANDS[] = {
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Section virtual address
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // Section size
     0x20, 0x1, 0x0, 0x0, // Section file offset
-    0x0, 0x0, 0x0, 0x0, // Section alignment 1
+    0x3, 0x0, 0x0, 0x0, // Section alignment 8
     0xFF, 0xFF, 0xFF, 0xFF, 0x0, 0x0, 0x0, 0x0, // Relocations offset + count
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // flags and reserved
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // reserved
@@ -348,7 +357,7 @@ const uint8_t MACHO32_COMMANDS[] = {
     0x0, 0x0, 0x0, 0x0, // Section virtual address
     0xFF, 0xFF, 0xFF, 0xFF, // Section size
     0x0, 0x1, 0x0, 0x0, // Section file offset
-    0x0, 0x0, 0x0, 0x0, // Section alignment 1
+    0x3, 0x0, 0x0, 0x0, // Section alignment 8
     0xFF, 0xFF, 0xFF, 0xFF, 0x0, 0x0, 0x0, 0x0, // Relocations offset + count
     0x0, 0x0, 0x0, 0x0, // Flags
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, // Reserved
@@ -470,7 +479,7 @@ uint8_t* write_macho_symbol_table(enum Format format, const uint64_t* sizes, cha
         if (i == 0) {
             sorted_names[2 * i].offset = 0;
         } else {
-            sorted_names[2 * i].offset = sorted_names[2 * (i - 1)].offset + sizes[i - 1] + 8;
+            sorted_names[2 * i].offset = sorted_names[2 * (i - 1)].offset + ALIGN_TO(sizes[i - 1], 8) + 8;
         }
         sorted_names[2 * i + 1].offset = sorted_names[2 * i].offset + 8;
         sorted_names[2 * i + 1].name = malloc(name_len + 2);
@@ -525,7 +534,7 @@ bool write_macho(char **names, const Filename_t *files,
     uint64_t strtable_size = 1;
     uint64_t data_size = 0;
     for (uint32_t i = 0; i < no_symbols; ++i) {
-        data_size += size[i] + 8;
+        data_size += ALIGN_TO(size[i], 8) + 8;
         strtable_size += 2 * strlen(names[i]) + 9;
         if (data_size > 0xffffffff || strtable_size > 0xffffffff) {
             ERROR_PRINT("Object does not fit all data\n");
@@ -627,7 +636,7 @@ const uint8_t ELF64_SECTION_HEADERS[] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // .(r)data size
     0x0, 0x0, 0x0, 0x0,                             // .(r)data link 0
     0x0, 0x0, 0x0, 0x0,                             // .(r)data info 0
-    0x1, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .(r)data alignment 1
+    0x8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .(r)data alignment 8
     0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,         // .(r)data entry size 0
                                                     //
     0x8, 0x0, 0x0, 0x0,                             // .symtab name offset
@@ -695,7 +704,7 @@ const uint8_t ELF32_SECTION_HEADERS[] = {
     0xFF, 0xFF, 0xFF, 0xFF, // .(r)data size
     0x0, 0x0, 0x0, 0x0,     // .(r)data link 0
     0x0, 0x0, 0x0, 0x0,     // .(r)data info 0
-    0x1, 0x0, 0x0, 0x0,     // .(r)data alignment 1
+    0x8, 0x0, 0x0, 0x0,     // .(r)data alignment 8
     0x0, 0x0, 0x0, 0x0,     // .(r)data entry size 0
                             //
     0x8, 0x0, 0x0, 0x0,     // .symtab name offset
@@ -775,7 +784,7 @@ void write_elf64_header(uint64_t data_size, uint32_t no_symbols,
     data_size += 8 * no_symbols + sizeof(ELF64_HEADER);
     data_size = ALIGN_TO(data_size, 8);
     data_size += 24 + no_symbols * sizeof(ELF64_SYMTAB) + sizeof(ELF_SHSTRTAB) +
-                 strtab_size;
+        strtab_size;
     data_size = ALIGN_TO(data_size, 8);
     WRITE_U64(out + 40, data_size);
     out[18] = machine;
@@ -817,7 +826,7 @@ uint8_t *write_elf64_symtab(const char **names, const uint64_t *size,
         strtab_ix += 2 * name_len + 7;
         WRITE_U64(base + 8, data_ix);
         WRITE_U64(base + 24 + 8, data_ix + 8);
-        data_ix += 8 + size[i];
+        data_ix += 8 + ALIGN_TO(size[i], 8);
     }
     return data;
 }
@@ -846,7 +855,7 @@ uint8_t *write_elf32_symtab(const char **names, const uint64_t *size,
         strtab_ix += 2 * name_len + 7;
         WRITE_U32(base + 4, data_ix);
         WRITE_U32(base + 16 + 4, data_ix + 8);
-        data_ix += 8 + size[i];
+        data_ix += 8 + ALIGN_TO(size[i], 8);
     }
     return data;
 }
@@ -909,7 +918,7 @@ bool write_elf(const char **names, const Filename_t *files,
     uint64_t data_size = 0;
     uint64_t strtab_size = 1;
     for (uint32_t i = 0; i < no_symbols; ++i) {
-        data_size += size[i];
+        data_size += ALIGN_TO(size[i], 8);
         strtab_size += 2 * strlen(names[i]) + 7;
         if (strtab_size > UINT32_MAX) {
             ERROR_PRINT("Total length of all symbol names to large\n");
@@ -1014,7 +1023,7 @@ const uint8_t COFF_SECTION_HEADER[] = {
     0x0,  0x0,  0x0,  0x0,                      // PointerToLinenumbers
     0x0,  0x0,                                  // NumberOfRelocations
     0x0,  0x0,                                  // NumberOfLinenumbers
-    0x40, 0x0,  0x10, 0x40 // Characteristics Initialized, 1-byte aligned, read
+    0x40, 0x0,  0x40, 0x40 // Characteristics Initialized, 8-byte aligned, read
 };
 
 const uint8_t COFF_SYMBOL_ENTRY[] = {
@@ -1136,7 +1145,7 @@ uint8_t *write_coff_symbol_table(const char **names, const uint64_t *size,
         }
         WRITE_U32(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 8,
                   offset + 8);
-        offset += (uint32_t)size[i] + 8;
+        offset += (uint32_t)ALIGN_TO(size[i], 8) + 8;
     }
     WRITE_U32(strtable, strtable_offset);
     return data;
@@ -1154,7 +1163,7 @@ bool write_coff(const char **names, const Filename_t *files,
     uint8_t header[sizeof(COFF_HEADER) + sizeof(COFF_SECTION_HEADER)];
     uint64_t full_size = 0;
     for (uint64_t i = 0; i < no_symbols; ++i) {
-        full_size += size[i];
+        full_size += ALIGN_TO(size[i], 8);
         if (full_size > INT32_MAX) {
             ERROR_PRINT("COFF-objects only support up to 2 GB of data\n");
             return false;
@@ -1511,6 +1520,7 @@ int ENTRY(int argc, CHAR **argv) {
         } else {
             CHAR *sep = STRRCHR(argv[i], ':');
             if (sep != NULL && sep - argv[i] == 1 && ((argv[i][0] >= LTR('A') && argv[i][0] <= 'Z') || (argv[i][0] >= LTR('a') && argv[i][0] <= 'z'))) {
+                // Found ':' part of drive letter, skip it
                 sep = STRRCHR(argv[i] + 2, ':');
             }
             if (sep != NULL) {
