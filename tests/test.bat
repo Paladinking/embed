@@ -9,6 +9,8 @@ python test.py --create VC86
 python test.py --create MINGW
 python test.py --create GCC32
 python test.py --create GCC64
+python test.py --create CLANG64
+python test.py --create CLANG32
 
 python test.py --run VC86
 call vcvarsall /clean_env

@@ -173,7 +173,7 @@ bool write_all(FILE *file, uint32_t size, const uint8_t *buf) {
 
 bool write_all_files(FILE *out, const Filename_t *names, const uint64_t *sizes,
                      uint32_t no_entries, const Filename_t outname,
-                     uint64_t header_size, uint64_t alignment) {
+                     uint64_t header_size, bool null_terminate, uint64_t alignment) {
     for (uint32_t i = 0; i < no_entries; ++i) {
         header_size += sizes[i];
         FILE *in = OPEN(names[i], "rb");
@@ -201,6 +201,14 @@ bool write_all_files(FILE *out, const Filename_t *names, const uint64_t *sizes,
                 ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
                 fclose(in);
                 return false;
+            }
+            if (null_terminate) {
+                if (fwrite("\0", 1, 1, out) != 1) {
+                    ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
+                    fclose(in);
+                    return false;
+                }
+                data_chunk++;
             }
             to_read -= data_chunk;
         }
@@ -500,7 +508,7 @@ uint8_t* write_macho_symbol_table(enum Format format, const uint64_t* sizes, cha
 
 bool write_macho(char **names, const Filename_t *files,
                const uint64_t *size, const uint32_t no_symbols,
-               const Filename_t outname, bool readonly, enum Format format) {
+               const Filename_t outname, bool readonly, bool null_terminate, enum Format format) {
     FILE* out = OPEN(outname, "wb");
     bool m64 = IS_64BIT(format);
     if (out == NULL) {
@@ -532,7 +540,8 @@ bool write_macho(char **names, const Filename_t *files,
         goto error;
     }
 
-    if (!write_all_files(out, files, size, no_symbols, outname, header_size + commands_size, m64 ? 8 : 4)) {
+    if (!write_all_files(out, files, size, no_symbols, outname, header_size + commands_size,
+                null_terminate, m64 ? 8 : 4)) {
         goto error;
     }
 
@@ -889,7 +898,7 @@ void write_elf32_section_headers(uint32_t data_size, uint32_t no_symbols,
 
 bool write_elf(const char **names, const Filename_t *files,
                const uint64_t *size, const uint32_t no_symbols,
-               const Filename_t outname, bool readonly, enum Format format) {
+               const Filename_t outname, bool readonly, bool null_terminate, enum Format format) {
     FILE *out = OPEN(outname, "wb");
     bool elf32 = IS_32BIT(format);
     if (out == NULL) {
@@ -928,7 +937,7 @@ bool write_elf(const char **names, const Filename_t *files,
         goto error;
     }
 
-    if (!write_all_files(out, files, size, no_symbols, outname, hsize,
+    if (!write_all_files(out, files, size, no_symbols, outname, hsize, null_terminate,
                          elf32 ? 4 : 8)) {
         goto error;
     }
@@ -1135,7 +1144,7 @@ uint8_t *write_coff_symbol_table(const char **names, const uint64_t *size,
 
 bool write_coff(const char **names, const Filename_t *files,
                 const uint64_t *size, const uint32_t no_symbols,
-                const Filename_t outname, bool readonly, enum Format format) {
+                const Filename_t outname, bool readonly, bool null_terminate, enum Format format) {
     FILE *out = OPEN(outname, "wb");
     if (out == NULL) {
         ERROR_FMT("Could not create file " F_FORMAT LTR("\n"), outname);
@@ -1159,7 +1168,7 @@ bool write_coff(const char **names, const Filename_t *files,
         goto error;
     }
     if (!write_all_files(out, files, size, no_symbols, outname,
-                         sizeof(COFF_HEADER) + sizeof(COFF_SECTION_HEADER),
+                         sizeof(COFF_HEADER) + sizeof(COFF_SECTION_HEADER), null_terminate,
                          8)) {
         goto error;
     }
@@ -1370,16 +1379,17 @@ const CHAR* HELP_MESSAGE = LTR("usage: embed [options] file[:symbol]...\n")
                            LTR("                            coff32, coff64, coff32-arm, coff64-arm, macho32, macho64,\n")
                            LTR("                            macho32-arm, macho64-arm\n")
                            LTR(" -w --writable             Write the data to a writable section instead of a readonly section\n")
+                           LTR(" -n --null-terminate       Add a null-terminator at the end of each embedded file\n")
                            LTR(" -H --header <header>      Generate a C header file <header> defining all symbols\n")
                            LTR(" -h --help                 Print this help message\n");
 
-#define FLAG_COUNT 6
+#define FLAG_COUNT 7
 const CHAR FLAGS[] = {
-    LTR('o'), LTR('s'), LTR('f'), LTR('w'), LTR('h'), LTR('H')
+    LTR('o'), LTR('s'), LTR('f'), LTR('w'), LTR('h'), LTR('H'), LTR('n')
 };
 
 const CHAR* LONG_FLAGS[] = {
-    LTR("output"), LTR("symbol-format"), LTR("object-format"), LTR("writable"), LTR("help"), LTR("header")
+    LTR("output"), LTR("symbol-format"), LTR("object-format"), LTR("writable"), LTR("help"), LTR("header"), LTR("null-terminate")
 };
 
 CHAR check_flag(CHAR* arg, int* i, uint32_t* offset) {
@@ -1387,7 +1397,7 @@ CHAR check_flag(CHAR* arg, int* i, uint32_t* offset) {
     if (arg[1] == '-') {
         for (int j = 0; j < FLAG_COUNT; ++j) {
             if (STRCMP(arg + 2, LONG_FLAGS[j]) == 0) {
-                if (FLAGS[j] != LTR('w') && FLAGS[j] != LTR('h')) {
+                if (FLAGS[j] != LTR('w') && FLAGS[j] != LTR('h') && FLAGS[j] != LTR('n')) {
                     *i += 1;
                 }
                 return FLAGS[j];
@@ -1399,7 +1409,7 @@ CHAR check_flag(CHAR* arg, int* i, uint32_t* offset) {
         if (arg[1] == FLAGS[j]) {
             if (arg[2] != LTR('\0')) {
                 *offset = 2;
-            } else if (FLAGS[j] != LTR('w') && FLAGS[j] != LTR('h'))  {
+            } else if (FLAGS[j] != LTR('w') && FLAGS[j] != LTR('h') && FLAGS[j] != LTR('n'))  {
                 *i += 1;
             }
             return FLAGS[j];
@@ -1427,6 +1437,7 @@ int ENTRY(int argc, CHAR **argv) {
     char *format = NULL;
     enum Format out_format = NONE_FORMAT;
     bool readonly = true;
+    bool null_terminate = false;
 
     uint32_t input_count = 0;
     for (int i = 1; i < argc; ++i) {
@@ -1491,9 +1502,11 @@ int ENTRY(int argc, CHAR **argv) {
                 }
                 header = argv[i] + ix;
             } else if (val == LTR('h')) {
-               OUT_FMT("" F_FORMAT, HELP_MESSAGE);
-               status = 0;
-               goto cleanup;
+                OUT_FMT("" F_FORMAT, HELP_MESSAGE);
+                status = 0;
+                goto cleanup;
+            } else if (val == LTR('n')) {
+                null_terminate = true;
             }
         } else {
             CHAR *sep = STRRCHR(argv[i], ':');
@@ -1565,6 +1578,9 @@ int ENTRY(int argc, CHAR **argv) {
             fclose(f);
             goto cleanup;
         }
+        if (null_terminate) {
+            ++size;
+        }
         input_sizes[i] = size;
         fclose(f);
     }
@@ -1592,13 +1608,13 @@ int ENTRY(int argc, CHAR **argv) {
 
     if (IS_COFF(out_format)) {
         write_coff((const char **)symbol_names, input_names, input_sizes,
-                   input_count, outname, readonly, out_format);
+                   input_count, outname, readonly, null_terminate, out_format);
     } else if (IS_MACHO(out_format)) {
         write_macho(symbol_names, input_names, input_sizes,
-                    input_count, outname, readonly, out_format);
+                    input_count, outname, readonly, null_terminate, out_format);
     } else {
         write_elf((const char **)symbol_names, input_names, input_sizes,
-                  input_count, outname, readonly, out_format);
+                  input_count, outname, readonly, null_terminate, out_format);
     }
     if (header != NULL) {
         write_c_header((const char **)symbol_names, input_sizes, input_count,
