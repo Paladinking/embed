@@ -6,55 +6,57 @@
 #include <string.h>
 
 #if defined _WIN32 && (defined _MSC_VER || defined UNICODE)
-#ifndef UNICODE
-#define UNICODE
-#endif
-#ifndef _UNICODE
-#define _UNICODE
-#endif
-#include <fcntl.h>
-#include <io.h>
-#include <wchar.h>
-typedef wchar_t *Filename_t;
-#define OPEN(filename, mode) _wfopen(filename, L##mode)
-#define ERROR_FMT(format, ...) fwprintf(stderr, L##format, __VA_ARGS__)
-#define ERROR_PRINT(msg) fwprintf(stderr, L##msg)
-#define OUT_FMT(format, ...) wprintf(L##format, __VA_ARGS__)
-#define REMOVE(filename) _wremove(filename)
-#define ENTRY wmain
-#define CHAR wchar_t
-#define LTR(c) L##c
-#define STRLEN wcslen
-#define STRCMP wcscmp
-#define STRCHR(s, l) wcschr(s, L##l)
-#define STRRCHR(s, l) wcsrchr(s, L##l)
-#define realpath(N, R) _wfullpath((R), (N), 256)
-#if defined _MSC_VER || defined __clang__
-#define STR_FORMAT L"%S"
-#define F_FORMAT L"%s"
+    #ifndef UNICODE
+        #define UNICODE
+    #endif
+    #ifndef _UNICODE
+        #define _UNICODE
+    #endif
+
+    #include <fcntl.h>
+    #include <io.h>
+    #include <wchar.h>
+
+    typedef wchar_t *Filename_t;
+    #define OPEN(filename, mode) _wfopen(filename, L##mode)
+    #define ERROR_FMT(format, ...) fwprintf(stderr, L##format, __VA_ARGS__)
+    #define ERROR_PRINT(msg) fwprintf(stderr, L##msg)
+    #define OUT_FMT(format, ...) wprintf(L##format, __VA_ARGS__)
+    #define REMOVE(filename) _wremove(filename)
+    #define ENTRY wmain
+    #define CHAR wchar_t
+    #define LTR(c) L##c
+    #define STRLEN wcslen
+    #define STRCMP wcscmp
+    #define STRCHR(s, l) wcschr(s, L##l)
+    #define STRRCHR(s, l) wcsrchr(s, L##l)
+    #define realpath(N, R) _wfullpath((R), (N), 256)
+    #if defined _MSC_VER || defined __clang__
+        #define STR_FORMAT L"%S"
+        #define F_FORMAT L"%s"
+    #else
+        #define STR_FORMAT L"%s"
+        #define F_FORMAT L"%S"
+    #endif
 #else
-#define STR_FORMAT L"%s"
-#define F_FORMAT L"%S"
-#endif
-#else
-#ifdef _WIN32
-#define realpath(N, R) _fullpath((R), (N), 256)
-#endif
-typedef char *Filename_t;
-#define OPEN(filename, mode) fopen(filename, mode)
-#define ERROR_FMT(...) fprintf(stderr, __VA_ARGS__)
-#define ERROR_PRINT(msg) fprintf(stderr, msg)
-#define OUT_FMT(...) printf(__VA_ARGS__)
-#define REMOVE(filename) remove(filename)
-#define ENTRY main
-#define CHAR char
-#define LTR(c) c
-#define STRLEN strlen
-#define STRCMP strcmp
-#define STRCHR(s, l) strchr(s, l)
-#define STRRCHR(s, l) strrchr(s, l)
-#define STR_FORMAT "%s"
-#define F_FORMAT "%s"
+    #ifdef _WIN32
+        #define realpath(N, R) _fullpath((R), (N), 256)
+    #endif
+    typedef char *Filename_t;
+    #define OPEN(filename, mode) fopen(filename, mode)
+    #define ERROR_FMT(...) fprintf(stderr, __VA_ARGS__)
+    #define ERROR_PRINT(msg) fprintf(stderr, msg)
+    #define OUT_FMT(...) printf(__VA_ARGS__)
+    #define REMOVE(filename) remove(filename)
+    #define ENTRY main
+    #define CHAR char
+    #define LTR(c) c
+    #define STRLEN strlen
+    #define STRCMP strcmp
+    #define STRCHR(s, l) strchr(s, l)
+    #define STRRCHR(s, l) strrchr(s, l)
+    #define STR_FORMAT "%s"
+    #define F_FORMAT "%s"
 #endif
 
 #define BIT32 0x1000000
@@ -1584,7 +1586,7 @@ int ENTRY(int argc, CHAR **argv) {
         if ((size = ftell(f)) < 0) {
             // This is likely the case on windows. COFF is limited to 4GB
             // anyways...
-            ERROR_FMT("File " F_FORMAT LTR(" to large\n"), input_names[i]);
+            ERROR_FMT("File " F_FORMAT LTR(" too large\n"), input_names[i]);
             fclose(f);
             goto cleanup;
         }
