@@ -63,9 +63,11 @@
 #define BIT64 0x2000000
 #define MACHINE_X86 0x1
 #define MACHINE_ARM 0x2
+#define MACHINE_WASM 0x3
 #define TYPE_COFF 0x10000
 #define TYPE_ELF 0x20000
 #define TYPE_MACHO 0x30000
+#define TYPE_EMSDK 0x40000
 
 enum Format {
     COFF64 = BIT64 | TYPE_COFF | MACHINE_X86,
@@ -80,6 +82,7 @@ enum Format {
     MACHO32 = BIT32 | TYPE_MACHO | MACHINE_X86,
     MACHO64_ARM = BIT64 | TYPE_MACHO | MACHINE_ARM,
     MACHO32_ARM = BIT32 | TYPE_MACHO | MACHINE_ARM,
+    EMSDK_OBJ = BIT32 | TYPE_EMSDK | MACHINE_WASM,
     NONE_FORMAT = 0
 };
 
@@ -88,15 +91,16 @@ enum Format {
 #define IS_COFF(format) (((format) & 0xff0000) == TYPE_COFF)
 #define IS_ELF(format) (((format) & 0xff0000) == TYPE_ELF)
 #define IS_MACHO(format) (((format) & 0xff0000) == TYPE_MACHO)
+#define IS_EMSDK(format) (((format) & 0xff0000) == TYPE_EMSDK)
 
 enum Format FORMATS[] = {COFF64, COFF32, COFF64_ARM, COFF32_ARM, ELF64, ELF32, ELF64_ARM,
-                         ELF32_ARM, MACHO64, MACHO32, MACHO64_ARM, MACHO32_ARM};
+                         ELF32_ARM, MACHO64, MACHO32, MACHO64_ARM, MACHO32_ARM, EMSDK_OBJ};
 
 const char *format_names[] = {"coff64", "coff32", "coff64-arm", "coff32-arm",
                               "elf64",  "elf32",  "elf64-arm", "elf32-arm",
-                              "macho64", "macho32", "macho64-arm", "macho32-arm"};
+                              "macho64", "macho32", "macho64-arm", "macho32-arm", "wasm-emsdk"};
 
-#define FORMAT_NAME_COUNT 12
+#define FORMAT_NAME_COUNT 13
 
 
 #define DEFAULTS(name, format) const enum Format DEFAULT_FORMAT = format; const char* HOST_NAME = name
@@ -160,6 +164,59 @@ DEFAULTS("Unkown", ELF64);
 
 #define ALIGN_DIFF(val, p) (((val) % (p) == 0) ? (0) : (p) - ((val) % (p)))
 #define ALIGN_TO(val, p) (val + ALIGN_DIFF(val, p))
+
+
+uint32_t size_varuint32(uint32_t v) {
+    uint32_t ix = 0;
+    do {
+        v >>= 7;
+        ++ix;
+    } while (v != 0);
+    return ix;
+}
+
+uint32_t write_varuint32(uint8_t* data, uint32_t v) {
+    uint32_t ix = 0;
+    do {
+        uint8_t byte = v & 0x7f;
+        v >>= 7;
+        if (v != 0) {
+            byte |= 0x80;
+        }
+        data[ix++] = byte;
+    } while (v != 0);
+    return ix;
+}
+
+uint32_t write_varint32(uint8_t* data, int32_t i) {
+    uint32_t v;
+    if (i >= 0) {
+        v = i;
+    } else if (i == INT32_MIN) {
+        v = 0x80000000;
+    } else {
+        v = -i;
+        v = ~(v - 1);
+    }
+    bool more = true;
+    bool negative = i < 0;
+    uint32_t ix = 0;
+    while (more) {
+        uint8_t byte = v & 0x7f;
+        v >>= 7;
+        if (negative) {
+            v |= (0xffffffff << (32 - 7)); // Sign extend
+        }
+        uint8_t sign_bit = byte & 0x40;
+        if ((v == 0 && sign_bit == 0) || (v == 0xffffffff && sign_bit != 0)) {
+            more = false;
+        } else {
+            byte |= 0x80;
+        }
+        data[ix++] = byte;
+    }
+    return ix;
+}
 
 bool write_all(FILE *file, uint32_t size, const uint8_t *buf) {
     uint32_t written = 0;
@@ -1168,7 +1225,7 @@ bool write_coff(const char **names, const Filename_t *files,
         full_size += ALIGN_TO(size[i], 8);
         if (full_size > INT32_MAX) {
             ERROR_PRINT("COFF-objects only support up to 2 GB of data\n");
-            return false;
+            goto error;
         }
     }
     write_coff_header(full_size, header, no_symbols, format);
@@ -1200,6 +1257,195 @@ error:
     REMOVE(outname);
     return false;
 }
+
+const uint8_t EMSDK_MODULE_HEADER[] = {
+    0x00, 0x61, 0x73, 0x6D, // Magic
+    0x01, 0x00, 0x00, 0x00  // Version
+};
+
+const uint8_t EMSDK_IMPORT_SECTION[] = {
+    0x02, // Import id
+    0x18, // size
+    0x01, // Number of imports
+    0x03, 'e', 'n', 'v',
+    0x0f, '_', '_', 'l', 'i', 'n', 'e', 'a', 'r', '_', 'm', 'e', 'm', 'o', 'r', 'y',
+    0x2, 0x0, 0x1
+};
+
+const uint8_t EMSDK_DATACOUNT_SECTION[] = {
+    0x0C, // Data Count id
+    0x01, // Size
+    0x01  //  Data count
+};
+
+const uint8_t EMSDK_CUSTOM_SECTIONS[] = {
+    0x00, // Custom id
+    0x23, // Size
+    0x09, 'p', 'r', 'o', 'd', 'u', 'c', 'e', 'r', 's', // name
+    0x01, // Number of fields
+    0x0c, 'p', 'r', 'o', 'c', 'e', 's', 's', 'e', 'd', '-', 'b', 'y',
+    0x01, // Number of field values
+    0x05, 'e', 'm', 'b', 'e', 'd', 0x03, '1', '.', '0',
+
+    0x00, // Custom id
+    0x94, 0x01, // Size
+    0x0f, 't', 'a', 'r', 'g', 'e', 't', '_', 'f', 'e', 'a', 't', 'u', 'r', 'e', 's',
+    0x08,
+    '+', 0x0b, 'b', 'u', 'l', 'k', '-', 'm', 'e', 'm', 'o', 'r', 'y', 
+    '+', 0x0f, 'b', 'u', 'l', 'k', '-', 'm', 'e', 'm', 'o', 'r', 'y', '-', 'o', 'p', 't', 
+    '+', 0x16, 'c', 'a', 'l', 'l', '-', 'i', 'n', 'd', 'i', 'r', 'e', 'c', 't', '-', 'o', 'v', 'e', 'r', 'l', 'o', 'n', 'g',
+    '+', 0x0a, 'm', 'u', 'l', 't', 'i', 'v', 'a', 'l', 'u', 'e', 
+    '+', 0x0f, 'm', 'u', 't', 'a', 'b', 'l', 'e', '-', 'g', 'l', 'o', 'b', 'a', 'l', 's',
+    '+', 0x13, 'n', 'o', 'n', 't', 'r', 'a', 'p', 'p', 'i', 'n', 'g', '-', 'f', 'p', 't', 'o', 'i', 'n', 't', 
+    '+', 0x0f, 'r', 'e', 'f', 'e', 'r', 'e', 'n', 'c', 'e', '-', 't', 'y', 'p', 'e', 's', 
+    '+', 0x08, 's', 'i', 'g', 'n', '-', 'e', 'x', 't'
+};
+
+bool write_emsdk_linking(FILE* out, const char** names, const uint64_t* size, uint32_t no_symbols,
+                         bool readonly, const Filename_t outname) {
+    uint32_t data_offset = 0;
+    uint32_t symtab_size = size_varuint32(no_symbols * 2);
+    for (uint32_t ix = 0; ix < no_symbols; ++ix) {
+        symtab_size += 4; // 2 * Symbol type + flags
+        uint32_t name_len = strlen(names[ix]);
+        symtab_size += size_varuint32(name_len) + name_len;
+        symtab_size += size_varuint32(name_len + 5) + name_len + 5;
+        symtab_size += 2 * size_varuint32(0); // data index
+        symtab_size += size_varuint32(data_offset);
+        symtab_size += size_varuint32(size[ix]);
+        symtab_size += size_varuint32(8);
+        data_offset += 8;
+        symtab_size += size_varuint32(data_offset);
+        data_offset += ALIGN_TO(size[ix], 8);
+    }
+
+    const char* name = readonly ? ".rodata" : ".data";
+    uint32_t segnets_size = 1 + 1 + strlen(name) + 1 + 1;
+    uint32_t linking_size = 1 + strlen("linking") + 1 + 
+                                1 + size_varuint32(symtab_size) + symtab_size + 
+                                1 + size_varuint32(segnets_size) + segnets_size;
+
+    uint8_t* linker = malloc(linking_size);
+    uint32_t offset = 0;
+    linker[offset++] = strlen("linking");
+    memcpy(linker + offset, "linking", strlen("linking"));
+    offset += strlen("linking");
+    linker[offset++] = 2; // Version
+    linker[offset++] = 8; // WASM_SYMBOL_TABLE
+    data_offset = 0;
+    offset += write_varuint32(linker + offset, symtab_size);
+
+    offset += write_varuint32(linker + offset, no_symbols * 2);
+    for (uint32_t ix = 0; ix < no_symbols; ++ix) {
+        uint32_t name_len = strlen(names[ix]);
+
+        linker[offset++] = 1; // SYMTAB_DATA
+        linker[offset++] = 4; // WASM_SYM_VISIBILITY_HIDDEN
+        offset += write_varuint32(linker + offset, name_len);
+        memcpy(linker + offset, names[ix], name_len);
+        offset += name_len;
+        offset += write_varuint32(linker + offset, 0);
+        offset += write_varuint32(linker + offset, data_offset + 8);
+        offset += write_varuint32(linker + offset, size[ix]);
+
+        linker[offset++] = 1; // SYMTAB_DATA
+        linker[offset++] = 4; // WASM_SYM_VISIBILITY_HIDDEN
+        offset += write_varuint32(linker + offset, name_len + 5);
+        memcpy(linker + offset, names[ix], name_len);
+        memcpy(linker + offset + name_len, "_size", 5);
+        offset += name_len + 5;
+        offset += write_varuint32(linker + offset, 0);
+        offset += write_varuint32(linker + offset, data_offset);
+        offset += write_varuint32(linker + offset, 8);
+        data_offset += 8 + ALIGN_TO(size[ix], 8);
+    }
+
+    linker[offset++] = 5; // WASM_SEGMENT_INFO
+    offset += write_varuint32(linker + offset, segnets_size);
+    linker[offset++] = 1;
+    linker[offset++] = strlen(name);
+    memcpy(linker + offset, name, strlen(name));
+    offset += strlen(name);
+    linker[offset++] = 3;
+    linker[offset++] = 0;
+
+    uint8_t buf[10];
+    offset = 0;
+    buf[offset++] = 0;
+    offset += write_varuint32(buf + offset, linking_size);
+    if (!write_all(out, offset, buf) || !write_all(out, linking_size, linker)) {
+        free(linker);
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        return false;
+    }
+    free(linker);
+    return true;
+}
+
+bool write_emsdk(const char **names, const Filename_t *files,
+                 const uint64_t *size, const uint32_t no_symbols,
+                 const Filename_t outname, bool readonly, bool null_terminate,
+                 enum Format format) {
+    FILE *out = OPEN(outname, "wb");
+    if (out == NULL) {
+        ERROR_FMT("Could not create file " F_FORMAT LTR("\n"), outname);
+        return false;
+    }
+    if (!write_all(out, sizeof(EMSDK_MODULE_HEADER), EMSDK_MODULE_HEADER)) {
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        goto error;
+    }
+    if (!write_all(out, sizeof(EMSDK_IMPORT_SECTION), EMSDK_IMPORT_SECTION)) {
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        goto error;
+    }
+    if (!write_all(out, sizeof(EMSDK_DATACOUNT_SECTION), EMSDK_DATACOUNT_SECTION)) {
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        goto error;
+    }
+    uint64_t total_data_size = 0;
+    for (uint32_t ix = 0; ix < no_symbols; ++ix) {
+        total_data_size += ALIGN_TO(size[ix], 8) + 8;
+    }
+    if (total_data_size > 0xffffffff) {
+        ERROR_PRINT("Total data size is too big");
+        goto error;
+    }
+    uint8_t data_len_buf[5];
+    uint32_t len_size = write_varuint32(data_len_buf, total_data_size);
+    uint8_t data_section_head[1 + 5 + 5];
+    data_section_head[0] = 0x0B; // Data id
+    uint32_t ix = write_varuint32(data_section_head + 1, total_data_size + len_size + 5) + 1;
+    data_section_head[ix++] = 1; // 1 entry
+    data_section_head[ix++] = 0; // Active
+    data_section_head[ix++] = 0x42; // 
+    data_section_head[ix++] = 0;    // Constant expression offset 0
+    data_section_head[ix++] = 0x0b; //
+    if (!write_all(out, ix, data_section_head) ||
+        !write_all(out, len_size, data_len_buf)) {
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        goto error;
+    }
+    if (!write_all_files(out, files, size, no_symbols, outname, 0, null_terminate, 1)) {
+        goto error;
+    }
+    if (!write_emsdk_linking(out, names, size, no_symbols, readonly, outname)) {
+        goto error;
+    }
+    if (!write_all(out, sizeof(EMSDK_CUSTOM_SECTIONS), EMSDK_CUSTOM_SECTIONS)) {
+        ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
+        goto error;
+    }
+
+
+    fclose(out);
+    return true;
+error:
+    fclose(out);
+    REMOVE(outname);
+    return false;
+}
+
 
 char *to_ascii(const CHAR *ptr) {
     size_t len = STRLEN(ptr);
@@ -1388,7 +1634,7 @@ const CHAR* HELP_MESSAGE = LTR("usage: embed [options] file[:symbol]...\n")
                            LTR(" -f --object-format <obj>  Write the output using format <obj>. \n")
                            LTR("                           Supported formats are: elf32, elf64, elf32-arm, elf64-arm,\n")
                            LTR("                            coff32, coff64, coff32-arm, coff64-arm, macho32, macho64,\n")
-                           LTR("                            macho32-arm, macho64-arm\n")
+                           LTR("                            macho32-arm, macho64-arm, wasm-emsdk\n")
                            LTR(" -w --writable             Write the data to a writable section instead of a readonly section\n")
                            LTR(" -n --null-terminate       Add a null-terminator at the end of each embedded file\n")
                            LTR(" -H --header <header>      Generate a C header file <header> defining all symbols\n")
@@ -1624,9 +1870,12 @@ int ENTRY(int argc, CHAR **argv) {
     } else if (IS_MACHO(out_format)) {
         write_macho(symbol_names, input_names, input_sizes,
                     input_count, outname, readonly, null_terminate, out_format);
-    } else {
+    } else if (IS_ELF(out_format)) {
         write_elf((const char **)symbol_names, input_names, input_sizes,
                   input_count, outname, readonly, null_terminate, out_format);
+    } else if (IS_EMSDK(out_format)) {
+        write_emsdk((const char**)symbol_names, input_names, input_sizes,
+                    input_count, outname, readonly, null_terminate, out_format);
     }
     if (header != NULL) {
         write_c_header((const char **)symbol_names, input_sizes, input_count,
