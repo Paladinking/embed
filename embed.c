@@ -165,6 +165,11 @@ DEFAULTS("Unkown", ELF64);
 #define ALIGN_DIFF(val, p) (((val) % (p) == 0) ? (0) : (p) - ((val) % (p)))
 #define ALIGN_TO(val, p) (val + ALIGN_DIFF(val, p))
 
+typedef struct InputFile {
+    Filename_t name;
+    char* symbol;
+    uint64_t size;
+} InputFile;
 
 uint32_t size_varuint32(uint32_t v) {
     uint32_t ix = 0;
@@ -188,36 +193,6 @@ uint32_t write_varuint32(uint8_t* data, uint32_t v) {
     return ix;
 }
 
-uint32_t write_varint32(uint8_t* data, int32_t i) {
-    uint32_t v;
-    if (i >= 0) {
-        v = i;
-    } else if (i == INT32_MIN) {
-        v = 0x80000000;
-    } else {
-        v = -i;
-        v = ~(v - 1);
-    }
-    bool more = true;
-    bool negative = i < 0;
-    uint32_t ix = 0;
-    while (more) {
-        uint8_t byte = v & 0x7f;
-        v >>= 7;
-        if (negative) {
-            v |= (0xffffffff << (32 - 7)); // Sign extend
-        }
-        uint8_t sign_bit = byte & 0x40;
-        if ((v == 0 && sign_bit == 0) || (v == 0xffffffff && sign_bit != 0)) {
-            more = false;
-        } else {
-            byte |= 0x80;
-        }
-        data[ix++] = byte;
-    }
-    return ix;
-}
-
 bool write_all(FILE *file, uint32_t size, const uint8_t *buf) {
     uint32_t written = 0;
     while (written < size) {
@@ -230,29 +205,29 @@ bool write_all(FILE *file, uint32_t size, const uint8_t *buf) {
     return true;
 }
 
-bool write_all_files(FILE *out, const Filename_t *names, const uint64_t *sizes,
+bool write_all_files(FILE *out, const InputFile* input,
                      uint32_t no_entries, const Filename_t outname,
                      uint64_t header_size, bool null_terminate, uint32_t alignment) {
     for (uint32_t i = 0; i < no_entries; ++i) {
-        header_size += ALIGN_TO(sizes[i], 8);
-        FILE *in = OPEN(names[i], "rb");
+        header_size += ALIGN_TO(input[i].size, 8);
+        FILE *in = OPEN(input[i].name, "rb");
         if (in == NULL) {
-            ERROR_FMT("Could not open file " F_FORMAT LTR("\n"), names[i]);
+            ERROR_FMT("Could not open file " F_FORMAT LTR("\n"), input[i].name);
             return false;
         }
         uint8_t size_buf[8];
-        WRITE_U64(size_buf, sizes[i]);
+        WRITE_U64(size_buf, input[i].size);
         if (fwrite(size_buf, 1, 8, out) != 8) {
             ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
             fclose(in);
             return false;
         }
-        uint64_t to_read = sizes[i];
+        uint64_t to_read = input[i].size;
         uint8_t data_buf[4096];
         while (to_read > 0) {
             uint32_t data_chunk = (uint32_t)fread(data_buf, 1, 4096, in);
             if (data_chunk == 0) {
-                ERROR_FMT("Reading from " F_FORMAT LTR(" failed\n"), names[i]);
+                ERROR_FMT("Reading from " F_FORMAT LTR(" failed\n"), input[i].name);
                 fclose(in);
                 return false;
             }
@@ -271,9 +246,9 @@ bool write_all_files(FILE *out, const Filename_t *names, const uint64_t *sizes,
             }
             to_read -= data_chunk;
         }
-        if (ALIGN_DIFF(sizes[i], 8) != 0) {
+        if (ALIGN_DIFF(input[i].size, 8) != 0) {
             uint8_t null_data[] = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0};
-            uint32_t padding = ALIGN_DIFF(sizes[i], 8);
+            uint32_t padding = ALIGN_DIFF(input[i].size, 8);
             if (fwrite(null_data, 1, padding, out) != padding) {
                 ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
                 return false;
@@ -294,8 +269,8 @@ bool write_all_files(FILE *out, const Filename_t *names, const uint64_t *sizes,
     return true;
 }
 
-void write_c_header(const char **symbol_names, uint64_t *input_sizes,
-                    uint32_t input_count, Filename_t header, bool readonly) {
+void write_c_header(const InputFile* input, uint32_t input_count, 
+                    Filename_t header, bool readonly) {
     FILE *out = OPEN(header, "w");
     if (out == NULL) {
         ERROR_FMT("Could not open " F_FORMAT LTR("\n"), header);
@@ -317,8 +292,8 @@ void write_c_header(const char **symbol_names, uint64_t *input_sizes,
             format = "extern const uint64_t %s_size;\nextern const uint8_t "
                      "%s[%llu];\n\n";
         }
-        if (fprintf(out, format, symbol_names[i], symbol_names[i],
-                    (unsigned long long)input_sizes[i]) < 0) {
+        if (fprintf(out, format, input[i].symbol, input[i].symbol,
+                    (unsigned long long)input[i].size) < 0) {
             ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), header);
             goto error;
         }
@@ -520,7 +495,7 @@ int sym_cmp(const void* a, const void* b) {
     return strcmp(a1->name, b1->name);
 }
 
-uint8_t* write_macho_symbol_table(enum Format format, const uint64_t* sizes, char** names, uint32_t no_symbols, uint64_t* size) {
+uint8_t* write_macho_symbol_table(enum Format format, const InputFile* input, uint32_t no_symbols, uint64_t* size) {
     if (format == MACHO32 || format == MACHO32_ARM) {
         *size = 2 * no_symbols * sizeof(MACHO32_SYMTAB_ENTRY) + 1;
     } else {
@@ -529,21 +504,21 @@ uint8_t* write_macho_symbol_table(enum Format format, const uint64_t* sizes, cha
     uint64_t strtable_base = *size - 1;
     macho_symbol_t* sorted_names = malloc(2 * no_symbols * sizeof(macho_symbol_t));
     for (uint32_t i = 0; i < no_symbols; ++i) {
-        uint32_t name_len = strlen(names[i]);
+        uint32_t name_len = strlen(input[i].symbol);
         *size += 2 * name_len + 9;
         sorted_names[2 * i].name = malloc(name_len + 7);
         sorted_names[2 * i].name[0] = '_';
-        memcpy(sorted_names[2 * i].name + 1, names[i], name_len);
+        memcpy(sorted_names[2 * i].name + 1, input[i].symbol, name_len);
         memcpy(sorted_names[2 * i].name + 1 + name_len, "_size", 6);
         if (i == 0) {
             sorted_names[2 * i].offset = 0;
         } else {
-            sorted_names[2 * i].offset = sorted_names[2 * (i - 1)].offset + ALIGN_TO(sizes[i - 1], 8) + 8;
+            sorted_names[2 * i].offset = sorted_names[2 * (i - 1)].offset + ALIGN_TO(input[i - 1].size, 8) + 8;
         }
         sorted_names[2 * i + 1].offset = sorted_names[2 * i].offset + 8;
         sorted_names[2 * i + 1].name = malloc(name_len + 2);
         sorted_names[2 * i + 1].name[0] = '_';
-        memcpy(sorted_names[2 * i + 1].name + 1, names[i], name_len + 1);
+        memcpy(sorted_names[2 * i + 1].name + 1, input[i].symbol, name_len + 1);
     }
     qsort(sorted_names, 2 * no_symbols, sizeof(macho_symbol_t), sym_cmp);
     uint8_t* data = malloc(*size);
@@ -574,8 +549,7 @@ uint8_t* write_macho_symbol_table(enum Format format, const uint64_t* sizes, cha
 }
 
 
-bool write_macho(char **names, const Filename_t *files,
-               const uint64_t *size, const uint32_t no_symbols,
+bool write_macho(const InputFile* input, const uint32_t no_symbols,
                const Filename_t outname, bool readonly, bool null_terminate, enum Format format) {
     FILE* out = OPEN(outname, "wb");
     bool m64 = IS_64BIT(format);
@@ -593,8 +567,8 @@ bool write_macho(char **names, const Filename_t *files,
     uint64_t strtable_size = 1;
     uint64_t data_size = 0;
     for (uint32_t i = 0; i < no_symbols; ++i) {
-        data_size += ALIGN_TO(size[i], 8) + 8;
-        strtable_size += 2 * strlen(names[i]) + 9;
+        data_size += ALIGN_TO(input[i].size, 8) + 8;
+        strtable_size += 2 * strlen(input[i].symbol) + 9;
         if (data_size > 0xffffffff || strtable_size > 0xffffffff) {
             ERROR_PRINT("Object does not fit all data\n");
             goto error;
@@ -608,13 +582,13 @@ bool write_macho(char **names, const Filename_t *files,
         goto error;
     }
 
-    if (!write_all_files(out, files, size, no_symbols, outname, header_size + commands_size,
+    if (!write_all_files(out, input, no_symbols, outname, header_size + commands_size,
                 null_terminate, m64 ? 8 : 4)) {
         goto error;
     }
 
     uint64_t symbols_size;
-    uint8_t* data = write_macho_symbol_table(format, size, names, no_symbols, &symbols_size);
+    uint8_t* data = write_macho_symbol_table(format, input, no_symbols, &symbols_size);
     if (!write_all(out, symbols_size, data)) {
         ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
@@ -861,11 +835,11 @@ void write_elf32_header(uint32_t data_size, uint32_t no_symbols,
     out[18] = machine;
 }
 
-uint8_t *write_elf64_symtab(const char **names, const uint64_t *size,
+uint8_t *write_elf64_symtab(const InputFile* input,
                             uint32_t no_symbols, uint64_t *data_size) {
     *data_size = 24 + sizeof(ELF64_SYMTAB) * no_symbols + 1;
     for (uint32_t i = 0; i < no_symbols; ++i) {
-        *data_size += 2 * strlen(names[i]) + 7;
+        *data_size += 2 * strlen(input[i].symbol) + 7;
     }
     uint8_t *data = malloc(*data_size);
     uint8_t *strtab = data + 24 + sizeof(ELF64_SYMTAB) * no_symbols;
@@ -876,25 +850,25 @@ uint8_t *write_elf64_symtab(const char **names, const uint64_t *size,
     for (uint32_t i = 0; i < no_symbols; ++i) {
         uint8_t *base = data + 24 + sizeof(ELF64_SYMTAB) * i;
         memcpy(base, ELF64_SYMTAB, sizeof(ELF64_SYMTAB));
-        uint32_t name_len = (uint32_t)strlen(names[i]);
-        memcpy(strtab + strtab_ix, names[i], name_len);
+        uint32_t name_len = (uint32_t)strlen(input[i].symbol);
+        memcpy(strtab + strtab_ix, input[i].symbol, name_len);
         memcpy(strtab + strtab_ix + name_len, "_size", 6);
-        memcpy(strtab + strtab_ix + name_len + 6, names[i], name_len + 1);
+        memcpy(strtab + strtab_ix + name_len + 6, input[i].symbol, name_len + 1);
         WRITE_U32(base, strtab_ix);
         WRITE_U32(base + 24, strtab_ix + name_len + 6);
         strtab_ix += 2 * name_len + 7;
         WRITE_U64(base + 8, data_ix);
         WRITE_U64(base + 24 + 8, data_ix + 8);
-        data_ix += 8 + ALIGN_TO(size[i], 8);
+        data_ix += 8 + ALIGN_TO(input[i].size, 8);
     }
     return data;
 }
 
-uint8_t *write_elf32_symtab(const char **names, const uint64_t *size,
+uint8_t *write_elf32_symtab(const InputFile* input,
                             uint32_t no_symbols, uint64_t *data_size) {
     *data_size = 16 + sizeof(ELF32_SYMTAB) * no_symbols + 1;
     for (uint32_t i = 0; i < no_symbols; ++i) {
-        *data_size += 2 * strlen(names[i]) + 7;
+        *data_size += 2 * strlen(input[i].symbol) + 7;
     }
     uint8_t *data = malloc(*data_size);
     uint8_t *strtab = data + 16 + sizeof(ELF32_SYMTAB) * no_symbols;
@@ -905,16 +879,16 @@ uint8_t *write_elf32_symtab(const char **names, const uint64_t *size,
     for (uint32_t i = 0; i < no_symbols; ++i) {
         uint8_t *base = data + 16 + sizeof(ELF32_SYMTAB) * i;
         memcpy(base, ELF32_SYMTAB, sizeof(ELF32_SYMTAB));
-        uint32_t name_len = (uint32_t)strlen(names[i]);
-        memcpy(strtab + strtab_ix, names[i], name_len);
+        uint32_t name_len = (uint32_t)strlen(input[i].symbol);
+        memcpy(strtab + strtab_ix, input[i].symbol, name_len);
         memcpy(strtab + strtab_ix + name_len, "_size", 6);
-        memcpy(strtab + strtab_ix + name_len + 6, names[i], name_len + 1);
+        memcpy(strtab + strtab_ix + name_len + 6, input[i].symbol, name_len + 1);
         WRITE_U32(base, strtab_ix);
         WRITE_U32(base + 16, strtab_ix + name_len + 6);
         strtab_ix += 2 * name_len + 7;
         WRITE_U32(base + 4, data_ix);
         WRITE_U32(base + 16 + 4, data_ix + 8);
-        data_ix += 8 + ALIGN_TO(size[i], 8);
+        data_ix += 8 + ALIGN_TO(input[i].size, 8);
     }
     return data;
 }
@@ -964,8 +938,7 @@ void write_elf32_section_headers(uint32_t data_size, uint32_t no_symbols,
     WRITE_U32(out + 5 * 40 + 16, data_size);
 }
 
-bool write_elf(const char **names, const Filename_t *files,
-               const uint64_t *size, const uint32_t no_symbols,
+bool write_elf(const InputFile* input, const uint32_t no_symbols,
                const Filename_t outname, bool readonly, bool null_terminate, enum Format format) {
     FILE *out = OPEN(outname, "wb");
     bool elf32 = IS_32BIT(format);
@@ -977,8 +950,8 @@ bool write_elf(const char **names, const Filename_t *files,
     uint64_t data_size = 0;
     uint64_t strtab_size = 1;
     for (uint32_t i = 0; i < no_symbols; ++i) {
-        data_size += ALIGN_TO(size[i], 8);
-        strtab_size += 2 * strlen(names[i]) + 7;
+        data_size += ALIGN_TO(input[i].size, 8);
+        strtab_size += 2 * strlen(input[i].symbol) + 7;
         if (strtab_size > UINT32_MAX) {
             ERROR_PRINT("Total length of all symbol names to large\n");
             goto error;
@@ -1005,16 +978,16 @@ bool write_elf(const char **names, const Filename_t *files,
         goto error;
     }
 
-    if (!write_all_files(out, files, size, no_symbols, outname, hsize, null_terminate,
+    if (!write_all_files(out, input, no_symbols, outname, hsize, null_terminate,
                          elf32 ? 4 : 8)) {
         goto error;
     }
     uint64_t symtab_size;
     uint8_t *symtab;
     if (elf32) {
-        symtab = write_elf32_symtab(names, size, no_symbols, &symtab_size);
+        symtab = write_elf32_symtab(input, no_symbols, &symtab_size);
     } else {
-        symtab = write_elf64_symtab(names, size, no_symbols, &symtab_size);
+        symtab = write_elf64_symtab(input, no_symbols, &symtab_size);
     }
     uint8_t shstrtab[sizeof(ELF_SHSTRTAB)];
     memcpy(shstrtab, ELF_SHSTRTAB, sizeof(ELF_SHSTRTAB));
@@ -1130,12 +1103,12 @@ void write_coff_section_header(uint32_t data_size, uint32_t no_symbols,
     data[19] = (data_size >> 24) & 0xff;
 }
 
-uint8_t *write_coff_symbol_table(const char **names, const uint64_t *size,
+uint8_t *write_coff_symbol_table(const InputFile* input,
                                  uint32_t no_symbols, bool coff32,
                                  uint32_t *data_size) {
     *data_size = 2 * sizeof(COFF_SYMBOL_ENTRY) * no_symbols + 4;
     for (uint32_t i = 0; i < no_symbols; ++i) {
-        uint32_t name_len = (uint32_t)strlen(names[i]);
+        uint32_t name_len = (uint32_t)strlen(input[i].symbol);
         if (coff32) {
             ++name_len;
         }
@@ -1153,7 +1126,7 @@ uint8_t *write_coff_symbol_table(const char **names, const uint64_t *size,
     uint32_t strtable_offset = 0x4;
     uint32_t offset = 0;
     for (uint32_t i = 0; i < no_symbols; ++i) {
-        uint32_t name_len = (uint32_t)strlen(names[i]);
+        uint32_t name_len = (uint32_t)strlen(input[i].symbol);
         if (coff32) {
             ++name_len;
         }
@@ -1165,9 +1138,9 @@ uint8_t *write_coff_symbol_table(const char **names, const uint64_t *size,
         if (name_len > 3) {
             if (coff32) {
                 *(strtable + strtable_offset) = '_';
-                memcpy(strtable + strtable_offset + 1, names[i], name_len - 1);
+                memcpy(strtable + strtable_offset + 1, input[i].symbol, name_len - 1);
             } else {
-                memcpy(strtable + strtable_offset, names[i], name_len);
+                memcpy(strtable + strtable_offset, input[i].symbol, name_len);
             }
             memcpy(strtable + strtable_offset + name_len, "_size", 6);
             WRITE_U32(data + data_offset + 4, strtable_offset);
@@ -1175,9 +1148,9 @@ uint8_t *write_coff_symbol_table(const char **names, const uint64_t *size,
         } else {
             if (coff32) {
                 *(data + data_offset) = '_';
-                memcpy(data + data_offset + 1, names[i], name_len - 1);
+                memcpy(data + data_offset + 1, input[i].symbol, name_len - 1);
             } else {
-                memcpy(data + data_offset, names[i], name_len);
+                memcpy(data + data_offset, input[i].symbol, name_len);
             }
             memcpy(data + data_offset + name_len, "_size", 5);
         }
@@ -1185,9 +1158,11 @@ uint8_t *write_coff_symbol_table(const char **names, const uint64_t *size,
         if (name_len > 8) {
             if (coff32) {
                 *(strtable + strtable_offset) = '_';
-                memcpy(strtable + strtable_offset + 1, names[i], name_len);
+                memcpy(strtable + strtable_offset + 1, input[i].symbol,
+                       name_len);
             } else {
-                memcpy(strtable + strtable_offset, names[i], name_len + 1);
+                memcpy(strtable + strtable_offset, input[i].symbol, 
+                       name_len + 1);
             }
             WRITE_U32(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 4,
                       strtable_offset);
@@ -1196,22 +1171,21 @@ uint8_t *write_coff_symbol_table(const char **names, const uint64_t *size,
             if (coff32) {
                 *(data + data_offset + sizeof(COFF_SYMBOL_ENTRY)) = '_';
                 memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 1,
-                       names[i], name_len - 1);
+                       input[i].symbol, name_len - 1);
             } else {
-                memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY), names[i],
-                       name_len);
+                memcpy(data + data_offset + sizeof(COFF_SYMBOL_ENTRY),
+                       input[i].symbol, name_len);
             }
         }
         WRITE_U32(data + data_offset + sizeof(COFF_SYMBOL_ENTRY) + 8,
                   offset + 8);
-        offset += (uint32_t)ALIGN_TO(size[i], 8) + 8;
+        offset += (uint32_t)ALIGN_TO(input[i].size, 8) + 8;
     }
     WRITE_U32(strtable, strtable_offset);
     return data;
 }
 
-bool write_coff(const char **names, const Filename_t *files,
-                const uint64_t *size, const uint32_t no_symbols,
+bool write_coff(InputFile* input, const uint32_t no_symbols,
                 const Filename_t outname, bool readonly, bool null_terminate, enum Format format) {
     FILE *out = OPEN(outname, "wb");
     if (out == NULL) {
@@ -1222,7 +1196,7 @@ bool write_coff(const char **names, const Filename_t *files,
     uint8_t header[sizeof(COFF_HEADER) + sizeof(COFF_SECTION_HEADER)];
     uint64_t full_size = 0;
     for (uint64_t i = 0; i < no_symbols; ++i) {
-        full_size += ALIGN_TO(size[i], 8);
+        full_size += ALIGN_TO(input[i].size, 8);
         if (full_size > INT32_MAX) {
             ERROR_PRINT("COFF-objects only support up to 2 GB of data\n");
             goto error;
@@ -1235,7 +1209,7 @@ bool write_coff(const char **names, const Filename_t *files,
         ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
-    if (!write_all_files(out, files, size, no_symbols, outname,
+    if (!write_all_files(out, input, no_symbols, outname,
                          sizeof(COFF_HEADER) + sizeof(COFF_SECTION_HEADER), null_terminate,
                          8)) {
         goto error;
@@ -1243,7 +1217,7 @@ bool write_coff(const char **names, const Filename_t *files,
 
     uint32_t symbol_table_size;
     uint8_t *symbol_table_buf = write_coff_symbol_table(
-        names, size, no_symbols, IS_32BIT(format), &symbol_table_size);
+        input, no_symbols, IS_32BIT(format), &symbol_table_size);
     if (!write_all(out, symbol_table_size, symbol_table_buf)) {
         ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
@@ -1301,22 +1275,22 @@ const uint8_t EMSDK_CUSTOM_SECTIONS[] = {
     '+', 0x08, 's', 'i', 'g', 'n', '-', 'e', 'x', 't'
 };
 
-bool write_emsdk_linking(FILE* out, const char** names, const uint64_t* size, uint32_t no_symbols,
+bool write_emsdk_linking(FILE* out, const InputFile* input, uint32_t no_symbols,
                          bool readonly, const Filename_t outname) {
     uint32_t data_offset = 0;
     uint32_t symtab_size = size_varuint32(no_symbols * 2);
     for (uint32_t ix = 0; ix < no_symbols; ++ix) {
         symtab_size += 4; // 2 * Symbol type + flags
-        uint32_t name_len = strlen(names[ix]);
+        uint32_t name_len = strlen(input[ix].symbol);
         symtab_size += size_varuint32(name_len) + name_len;
         symtab_size += size_varuint32(name_len + 5) + name_len + 5;
         symtab_size += 2 * size_varuint32(0); // data index
         symtab_size += size_varuint32(data_offset);
-        symtab_size += size_varuint32(size[ix]);
+        symtab_size += size_varuint32(input[ix].size);
         symtab_size += size_varuint32(8);
         data_offset += 8;
         symtab_size += size_varuint32(data_offset);
-        data_offset += ALIGN_TO(size[ix], 8);
+        data_offset += ALIGN_TO(input[ix].size, 8);
     }
 
     const char* name = readonly ? ".rodata" : ".data";
@@ -1337,27 +1311,27 @@ bool write_emsdk_linking(FILE* out, const char** names, const uint64_t* size, ui
 
     offset += write_varuint32(linker + offset, no_symbols * 2);
     for (uint32_t ix = 0; ix < no_symbols; ++ix) {
-        uint32_t name_len = strlen(names[ix]);
+        uint32_t name_len = strlen(input[ix].symbol);
 
         linker[offset++] = 1; // SYMTAB_DATA
         linker[offset++] = 4; // WASM_SYM_VISIBILITY_HIDDEN
         offset += write_varuint32(linker + offset, name_len);
-        memcpy(linker + offset, names[ix], name_len);
+        memcpy(linker + offset, input[ix].symbol, name_len);
         offset += name_len;
         offset += write_varuint32(linker + offset, 0);
         offset += write_varuint32(linker + offset, data_offset + 8);
-        offset += write_varuint32(linker + offset, size[ix]);
+        offset += write_varuint32(linker + offset, input[ix].size);
 
         linker[offset++] = 1; // SYMTAB_DATA
         linker[offset++] = 4; // WASM_SYM_VISIBILITY_HIDDEN
         offset += write_varuint32(linker + offset, name_len + 5);
-        memcpy(linker + offset, names[ix], name_len);
+        memcpy(linker + offset, input[ix].symbol, name_len);
         memcpy(linker + offset + name_len, "_size", 5);
         offset += name_len + 5;
         offset += write_varuint32(linker + offset, 0);
         offset += write_varuint32(linker + offset, data_offset);
         offset += write_varuint32(linker + offset, 8);
-        data_offset += 8 + ALIGN_TO(size[ix], 8);
+        data_offset += 8 + ALIGN_TO(input[ix].size, 8);
     }
 
     linker[offset++] = 5; // WASM_SEGMENT_INFO
@@ -1382,8 +1356,7 @@ bool write_emsdk_linking(FILE* out, const char** names, const uint64_t* size, ui
     return true;
 }
 
-bool write_emsdk(const char **names, const Filename_t *files,
-                 const uint64_t *size, const uint32_t no_symbols,
+bool write_emsdk(const InputFile* input, const uint32_t no_symbols,
                  const Filename_t outname, bool readonly, bool null_terminate,
                  enum Format format) {
     FILE *out = OPEN(outname, "wb");
@@ -1405,7 +1378,7 @@ bool write_emsdk(const char **names, const Filename_t *files,
     }
     uint64_t total_data_size = 0;
     for (uint32_t ix = 0; ix < no_symbols; ++ix) {
-        total_data_size += ALIGN_TO(size[ix], 8) + 8;
+        total_data_size += ALIGN_TO(input[ix].size, 8) + 8;
     }
     if (total_data_size > 0xffffffff) {
         ERROR_PRINT("Total data size is too big");
@@ -1426,17 +1399,16 @@ bool write_emsdk(const char **names, const Filename_t *files,
         ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
-    if (!write_all_files(out, files, size, no_symbols, outname, 0, null_terminate, 1)) {
+    if (!write_all_files(out, input, no_symbols, outname, 0, null_terminate, 1)) {
         goto error;
     }
-    if (!write_emsdk_linking(out, names, size, no_symbols, readonly, outname)) {
+    if (!write_emsdk_linking(out, input, no_symbols, readonly, outname)) {
         goto error;
     }
     if (!write_all(out, sizeof(EMSDK_CUSTOM_SECTIONS), EMSDK_CUSTOM_SECTIONS)) {
         ERROR_FMT("Writing to " F_FORMAT LTR(" failed\n"), outname);
         goto error;
     }
-
 
     fclose(out);
     return true;
@@ -1675,6 +1647,145 @@ CHAR check_flag(CHAR* arg, int* i, uint32_t* offset) {
     return LTR('\0');
 }
 
+struct Options {
+    enum Format obj_format;
+    char* symbol_format;
+    bool readonly;
+    bool help;
+    bool null_terminate;
+    Filename_t header;
+    Filename_t outname;
+};
+
+InputFile* read_args(int argc, CHAR** argv, uint32_t* input_count, 
+                     struct Options* opts) {
+    InputFile* input = malloc(argc * sizeof(*input));
+    opts->obj_format = NONE_FORMAT;
+    opts->symbol_format = NULL;
+    opts->readonly = true;
+    opts->null_terminate = false;
+    opts->header = NULL;
+    opts->outname = NULL;
+    opts->help = false;
+    
+    *input_count = 0;
+    uint32_t count = 0;
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i][0] == LTR('-')) {
+            uint32_t ix = 0;
+            CHAR val = check_flag(argv[i], &i, &ix);
+            if (val == LTR('\0')) {
+                ERROR_FMT("Unkown flag '" F_FORMAT LTR("'\n"), argv[i]);
+                goto cleanup;
+            }
+            if (i == argc) {
+                ERROR_FMT("No value specified for '" F_FORMAT LTR("'\n"),
+                          argv[i - 1]);
+                goto cleanup;
+            }
+
+            if (val == LTR('o')) {
+                if (opts->outname != NULL) {
+                    ERROR_PRINT("Extra output files specified\n");
+                    goto cleanup;
+                }
+                uint32_t len = 1 + (uint32_t)STRLEN(argv[i] + ix);
+                opts->outname = malloc(len * sizeof(CHAR));
+                memcpy(opts->outname, argv[i] + ix, len * sizeof(CHAR));
+            } else if (val == LTR('s')) {
+                if (opts->symbol_format != NULL) {
+                    ERROR_PRINT("Multiple symbol formats specified\n");
+                    goto cleanup;
+                }
+                opts->symbol_format = to_symbol(argv[i] + ix, false, true);
+                if (opts->symbol_format == NULL) {
+                    ERROR_FMT("Invalid symbol format " F_FORMAT LTR("\n"),
+                           argv[i] + ix);
+                    goto cleanup;
+                }
+            } else if (val == LTR('f')) {
+                if (opts->obj_format != NONE_FORMAT) {
+                    ERROR_PRINT("Multiple object formats specified\n");
+                    goto cleanup;
+                }
+                char *format = to_ascii(argv[i] + ix);
+                if (format != NULL) {
+                    for (int i = 0; i < FORMAT_NAME_COUNT; ++i) {
+                        if (strcmp(format, format_names[i]) == 0) {
+                            opts->obj_format = FORMATS[i];
+                            break;
+                        }
+                    }
+                    free(format);
+                }
+                if (opts->obj_format == NONE_FORMAT) {
+                    ERROR_FMT("Unsupported object format " F_FORMAT LTR("\n"),
+                              argv[i] + ix);
+                    goto cleanup;
+                }
+            } else if (val == LTR('w')) {
+                opts->readonly = false;
+            } else if (val == LTR('H')) {
+                if (opts->header != NULL) {
+                    ERROR_PRINT("Multiple header files specified\n");
+                    goto cleanup;
+                }
+                opts->header = argv[i] + ix;
+            } else if (val == LTR('h')) {
+                OUT_FMT("" F_FORMAT, HELP_MESSAGE);
+                opts->help = true;
+                goto cleanup;
+            } else if (val == LTR('n')) {
+                opts->null_terminate = true;
+            }
+        } else {
+            CHAR *sep = STRRCHR(argv[i], ':');
+            if (sep != NULL && sep - argv[i] == 1 && ((argv[i][0] >= LTR('A') && argv[i][0] <= 'Z') || (argv[i][0] >= LTR('a') && argv[i][0] <= 'z'))) {
+                // Found ':' part of drive letter, skip it
+                sep = STRRCHR(argv[i] + 2, ':');
+            }
+            if (sep != NULL) {
+                uint32_t len = (uint32_t)(sep - argv[i]);
+                input[count].name = malloc((len + 1) * sizeof(CHAR));
+                memcpy(input[count].name, argv[i], len * sizeof(CHAR));
+                input[count].name[len] = LTR('\0');
+                *sep = LTR('\0');
+                CHAR *symbol_name_root = sep + 1;
+                if (*symbol_name_root == LTR('\0')) {
+                    ERROR_FMT("Invalid argument " F_FORMAT LTR("\n"), argv[i]);
+                    goto cleanup;
+                }
+                input[count].symbol =
+                    to_symbol(symbol_name_root, false, false);
+                if (input[count].symbol == NULL) {
+                    ERROR_FMT("Invalid symbol name " F_FORMAT LTR("\n"),
+                           symbol_name_root);
+                    goto cleanup;
+                }
+            } else {
+                uint32_t len = (uint32_t)STRLEN(argv[i]);
+                input[count].name = malloc((len + 1) * sizeof(CHAR));
+                memcpy(input[count].name, argv[i],
+                       (len + 1) * sizeof(CHAR));
+                input[count].symbol = NULL;
+            }
+            ++count;
+        }
+    }
+    *input_count = count;
+    return input;
+cleanup:
+    free(input);
+    if (opts->symbol_format != NULL) {
+        free(opts->symbol_format);
+    }
+    if (opts->outname != NULL) {
+        free(opts->outname);
+    }
+    return NULL;
+}
+
+
 int ENTRY(int argc, CHAR **argv) {
 #if defined _WIN32 && defined UNICODE
     _setmode(_fileno(stdout), _O_U16TEXT);
@@ -1686,144 +1797,38 @@ int ENTRY(int argc, CHAR **argv) {
         return 1;
     }
 
-    Filename_t outname = NULL;
-    Filename_t header = NULL;
-    Filename_t *input_names = malloc(argc * sizeof(Filename_t));
-    char **symbol_names = malloc(argc * sizeof(char *));
-    uint64_t *input_sizes = malloc(argc * sizeof(uint64_t));
-    char *format = NULL;
-    enum Format out_format = NONE_FORMAT;
-    bool readonly = true;
-    bool null_terminate = false;
-
-    uint32_t input_count = 0;
-    for (int i = 1; i < argc; ++i) {
-        if (argv[i][0] == LTR('-')) {
-            uint32_t ix = 0;
-            CHAR val = check_flag(argv[i], &i, &ix);
-            if (val == LTR('\0')) {
-                ERROR_FMT("Unkown flag '" F_FORMAT LTR("'\n"), argv[i]);
-                goto cleanup;
-            }
-            if (i == argc) {
-                ERROR_FMT("No value specified for '" F_FORMAT LTR("'\n"),
-                        argv[i - 1]);
-                goto cleanup;
-            }
-
-            if (val == LTR('o')) {
-                if (outname != NULL) {
-                    ERROR_PRINT("Extra output files specified\n");
-                    goto cleanup;
-                }
-                uint32_t len = 1 + (uint32_t)STRLEN(argv[i] + ix);
-                outname = malloc(len * sizeof(CHAR));
-                memcpy(outname, argv[i] + ix, len * sizeof(CHAR));
-            } else if (val == LTR('s')) {
-                if (format != NULL) {
-                    ERROR_PRINT("Multiple symbol formats specified\n");
-                    goto cleanup;
-                }
-                format = to_symbol(argv[i] + ix, false, true);
-                if (format == NULL) {
-                    ERROR_FMT("Invalid symbol format " F_FORMAT LTR("\n"),
-                           argv[i] + ix);
-                    goto cleanup;
-                }
-            } else if (val == LTR('f')) {
-                if (out_format != NONE_FORMAT) {
-                    ERROR_PRINT("Multiple object formats specified\n");
-                    goto cleanup;
-                }
-                char *format = to_ascii(argv[i] + ix);
-                if (format != NULL) {
-                    for (int i = 0; i < FORMAT_NAME_COUNT; ++i) {
-                        if (strcmp(format, format_names[i]) == 0) {
-                            out_format = FORMATS[i];
-                            break;
-                        }
-                    }
-                    free(format);
-                }
-                if (out_format == NONE_FORMAT) {
-                    ERROR_FMT("Unsupported object format " F_FORMAT LTR("\n"),
-                           argv[i] + ix);
-                    goto cleanup;
-                }
-            } else if (val == LTR('w')) {
-                readonly = false;
-            } else if (val == LTR('H')) {
-                if (header != NULL) {
-                    ERROR_PRINT("Multiple header files specified\n");
-                    goto cleanup;
-                }
-                header = argv[i] + ix;
-            } else if (val == LTR('h')) {
-                OUT_FMT("" F_FORMAT, HELP_MESSAGE);
-                status = 0;
-                goto cleanup;
-            } else if (val == LTR('n')) {
-                null_terminate = true;
-            }
-        } else {
-            CHAR *sep = STRRCHR(argv[i], ':');
-            if (sep != NULL && sep - argv[i] == 1 && ((argv[i][0] >= LTR('A') && argv[i][0] <= 'Z') || (argv[i][0] >= LTR('a') && argv[i][0] <= 'z'))) {
-                // Found ':' part of drive letter, skip it
-                sep = STRRCHR(argv[i] + 2, ':');
-            }
-            if (sep != NULL) {
-                uint32_t len = (uint32_t)(sep - argv[i]);
-                input_names[input_count] = malloc((len + 1) * sizeof(CHAR));
-                memcpy(input_names[input_count], argv[i], len * sizeof(CHAR));
-                input_names[input_count][len] = LTR('\0');
-                *sep = LTR('\0');
-                CHAR *symbol_name_root = sep + 1;
-                if (*symbol_name_root == LTR('\0')) {
-                    ERROR_FMT("Invalid argument " F_FORMAT LTR("\n"), argv[i]);
-                    goto cleanup;
-                }
-                symbol_names[input_count] =
-                    to_symbol(symbol_name_root, false, false);
-                if (symbol_names[input_count] == NULL) {
-                    ERROR_FMT("Invalid symbol name " F_FORMAT LTR("\n"),
-                           symbol_name_root);
-                    goto cleanup;
-                }
-            } else {
-                uint32_t len = (uint32_t)STRLEN(argv[i]);
-                input_names[input_count] = malloc((len + 1) * sizeof(CHAR));
-                memcpy(input_names[input_count], argv[i],
-                       (len + 1) * sizeof(CHAR));
-                symbol_names[input_count] = NULL;
-            }
-            ++input_count;
-        }
+    struct Options opts;
+    uint32_t input_count;
+    InputFile* input = read_args(argc, argv, &input_count, &opts);
+    if (input == NULL) {
+        return opts.help ? 0 : 1;
     }
+
     if (input_count == 0) {
         ERROR_PRINT("No input files specified\n");
         goto cleanup;
     }
-    if (out_format == NONE_FORMAT) {
-        out_format = DEFAULT_FORMAT;
+    if (opts.obj_format == NONE_FORMAT) {
+        opts.obj_format = DEFAULT_FORMAT;
     }
-    if (outname == NULL) {
-        outname = malloc(10 * sizeof(CHAR));
-        if (IS_COFF(out_format)) {
-            memcpy(outname, LTR("embed.obj"), 10 * sizeof(CHAR));
+    if (opts.outname == NULL) {
+        opts.outname = malloc(10 * sizeof(CHAR));
+        if (IS_COFF(opts.obj_format)) {
+            memcpy(opts.outname, LTR("embed.obj"), 10 * sizeof(CHAR));
         } else {
-            memcpy(outname, LTR("embed.o"), 8 * sizeof(CHAR));
+            memcpy(opts.outname, LTR("embed.o"), 8 * sizeof(CHAR));
         }
     }
-    if (format == NULL) {
-        format = malloc(5);
-        memcpy(format, "%f%e", 5);
+    if (opts.symbol_format == NULL) {
+        opts.symbol_format = malloc(5);
+        memcpy(opts.symbol_format, "%f%e", 5);
     }
 
     for (uint32_t i = 0; i < input_count; ++i) {
-        FILE *f = OPEN(input_names[i], "rb");
+        FILE *f = OPEN(input[i].name, "rb");
         long size;
         if (f == NULL || fseek(f, 0, SEEK_END) != 0) {
-            ERROR_FMT("Failed to open input file " F_FORMAT LTR("\n"), input_names[i]);
+            ERROR_FMT("Failed to open input file " F_FORMAT LTR("\n"), input[i].name);
             if (f != NULL) {
                 fclose(f);
             }
@@ -1832,23 +1837,23 @@ int ENTRY(int argc, CHAR **argv) {
         if ((size = ftell(f)) < 0) {
             // This is likely the case on windows. COFF is limited to 4GB
             // anyways...
-            ERROR_FMT("File " F_FORMAT LTR(" too large\n"), input_names[i]);
+            ERROR_FMT("File " F_FORMAT LTR(" too large\n"), input[i].name);
             fclose(f);
             goto cleanup;
         }
-        if (null_terminate) {
+        if (opts.null_terminate) {
             ++size;
         }
-        input_sizes[i] = size;
+        input[i].size = size;
         fclose(f);
     }
 
     for (uint32_t i = 0; i < input_count; ++i) {
-        if (symbol_names[i] == NULL) {
-            symbol_names[i] = get_symbol(format, input_names[i], i);
-            if (symbol_names[i] == NULL) {
+        if (input[i].symbol == NULL) {
+            input[i].symbol = get_symbol(opts.symbol_format, input[i].name, i);
+            if (input[i].symbol == NULL) {
                 ERROR_FMT("Format gives invalid symbol for " F_FORMAT LTR("\n"),
-                       input_names[i]);
+                          input[i].name);
                 goto cleanup;
             }
         }
@@ -1856,42 +1861,39 @@ int ENTRY(int argc, CHAR **argv) {
 
     for (uint32_t i = 0; i < input_count; ++i) {
         for (uint32_t j = i + 1; j < input_count; ++j) {
-            if (strcmp(symbol_names[i], symbol_names[j]) == 0) {
+            if (strcmp(input[i].symbol, input[j].symbol) == 0) {
                 ERROR_FMT("Duplicate symbol name " STR_FORMAT LTR("\n"),
-                       symbol_names[i]);
+                       input[i].symbol);
                 goto cleanup;
             }
         }
     }
 
-    if (IS_COFF(out_format)) {
-        write_coff((const char **)symbol_names, input_names, input_sizes,
-                   input_count, outname, readonly, null_terminate, out_format);
-    } else if (IS_MACHO(out_format)) {
-        write_macho(symbol_names, input_names, input_sizes,
-                    input_count, outname, readonly, null_terminate, out_format);
-    } else if (IS_ELF(out_format)) {
-        write_elf((const char **)symbol_names, input_names, input_sizes,
-                  input_count, outname, readonly, null_terminate, out_format);
-    } else if (IS_EMSDK(out_format)) {
-        write_emsdk((const char**)symbol_names, input_names, input_sizes,
-                    input_count, outname, readonly, null_terminate, out_format);
+    if (IS_COFF(opts.obj_format)) {
+        write_coff(input, input_count, opts.outname, opts.readonly, 
+                   opts.null_terminate, opts.obj_format);
+    } else if (IS_MACHO(opts.obj_format)) {
+        write_macho(input, input_count, opts.outname, opts.readonly,
+                    opts.null_terminate, opts.obj_format);
+    } else if (IS_ELF(opts.obj_format)) {
+        write_elf(input, input_count, opts.outname, opts.readonly, 
+                  opts.null_terminate, opts.obj_format);
+    } else if (IS_EMSDK(opts.obj_format)) {
+        write_emsdk(input, input_count, opts.outname, opts.readonly,
+                    opts.null_terminate, opts.obj_format);
     }
-    if (header != NULL) {
-        write_c_header((const char **)symbol_names, input_sizes, input_count,
-                       header, readonly);
+    if (opts.header != NULL) {
+        write_c_header(input, input_count, opts.header, opts.readonly);
     }
 
     status = 0;
 cleanup:
-    free(outname);
+    free(opts.outname);
     for (uint32_t i = 0; i < input_count; ++i) {
-        free(input_names[i]);
-        free(symbol_names[i]);
+        free(input[i].name);
+        free(input[i].symbol);
     }
-    free(input_names);
-    free(format);
-    free(symbol_names);
-    free(input_sizes);
+    free(input);
+    free(opts.symbol_format);
     return status;
 }
